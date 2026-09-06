@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { connectionErrorMessage, getApiBaseUrl } from "./api-base.js";
 import "./styles.css";
+
+const API_BASE_URL = getApiBaseUrl();
 
 const api = {
   async health() {
@@ -45,7 +48,12 @@ async function request(url, options = {}) {
     "Content-Type": "application/json",
     ...(options.headers || {})
   };
-  const response = await fetch(url, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${url}`, { ...options, headers });
+  } catch {
+    throw new Error(connectionErrorMessage());
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || "Request failed");
   return payload;

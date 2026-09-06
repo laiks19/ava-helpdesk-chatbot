@@ -11,6 +11,7 @@ import {
   getOpenAiModel,
   resolveHelpdeskAnswer
 } from "../src/server/helpdesk-core.js";
+import { connectionErrorMessage, getApiBaseUrl } from "../src/client/api-base.js";
 
 test("session store keeps conversations isolated by browser tab session id", () => {
   const sessions = createSessionStore();
@@ -118,4 +119,10 @@ test("OpenAI connection failures return a useful helpdesk response instead of th
 test("OpenAI fallback defaults to the cheap helpdesk model", () => {
   assert.equal(getOpenAiModel({}), "gpt-4o-mini");
   assert.equal(getOpenAiModel({ OPENAI_MODEL: "gpt-4.1-mini" }), "gpt-4.1-mini");
+});
+
+test("published Sites frontend points API calls to the local Ava server", () => {
+  assert.equal(getApiBaseUrl({ hostname: "ava-helpdesk-chatbot.laiks19.chatgpt.site" }), "http://127.0.0.1:3001");
+  assert.equal(getApiBaseUrl({ hostname: "127.0.0.1" }), "");
+  assert.match(connectionErrorMessage(), /npm run server/);
 });
