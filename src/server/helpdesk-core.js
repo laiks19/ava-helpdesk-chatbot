@@ -1,0 +1,218 @@
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export function currentDateString(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(now);
+}
+
+export function getOpenAiModel(env = process.env) {
+  return env.OPENAI_MODEL || "gpt-4o-mini";
+}
+
+export function createSessionStore({ persistPath } = {}) {
+  const sessions = new Map();
+
+  async function persist() {
+    if (!persistPath) return;
+    await mkdir(path.dirname(persistPath), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify(Object.fromEntries(sessions), null, 2),
+      "utf8"
+    );
+  }
+
+  return {
+    async load() {
+      if (!persistPath) return;
+      try {
+        const raw = await readFile(persistPath, "utf8");
+        for (const [sessionId, messages] of Object.entries(JSON.parse(raw))) {
+          sessions.set(sessionId, Array.isArray(messages) ? messages : []);
+        }
+      } catch {
+        await persist();
+      }
+    },
+    getMessages(sessionId) {
+      return [...(sessions.get(sessionId) || [])];
+    },
+    addMessage(sessionId, message) {
+      const messages = sessions.get(sessionId) || [];
+      const entry = { ...message, timestamp: message.timestamp || new Date().toISOString() };
+      messages.push(entry);
+      sessions.set(sessionId, messages);
+      return entry;
+    },
+    async save() {
+      await persist();
+    },
+    async clear(sessionId) {
+      sessions.delete(sessionId);
+      await persist();
+    }
+  };
+}
+
+export function createKnowledgeBase(initialDocuments = []) {
+  const documents = [...initialDocuments];
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "not",
+    "how",
+    "what",
+    "why",
+    "can",
+    "you",
+    "your",
+    "about",
+    "into",
+    "from",
+    "write",
+    "short",
+    "sentence",
+    "issue",
+    "problem",
+    "help"
+  ]);
+
+  function tokenize(value) {
+    return String(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2 && !stopWords.has(word));
+  }
+
+  function excerpt(text, token) {
+    const lower = text.toLowerCase();
+    const index = token ? lower.indexOf(token.toLowerCase()) : 0;
+    const start = Math.max(0, index - 180);
+    const end = Math.min(text.length, Math.max(index, 0) + 460);
+    return text.slice(start, end).replace(/\s+/g, " ").trim();
+  }
+
+  return {
+    addDocument(document) {
+      const existingIndex = documents.findIndex((item) => item.id === document.id);
+      const normalized = { ...document, text: document.text || "" };
+      if (existingIndex >= 0) documents[existingIndex] = normalized;
+      else documents.push(normalized);
+    },
+    listDocuments() {
+      return documents.map(({ text, ...metadata }) => ({
+        ...metadata,
+        characters: text.length
+      }));
+    },
+    exportDocuments() {
+      return [...documents];
+    },
+    count() {
+      return documents.length;
+    },
+    search(query) {
+      const tokens = [...new Set(tokenize(query))];
+      if (!tokens.length) return null;
+
+      const ranked = documents
+        .map((document) => {
+          const haystack = new Set(tokenize(`${document.originalName} ${document.text}`));
+          const matched = tokens.filter((token) => haystack.has(token));
+          return { document, matched, score: matched.length };
+        })
+        .filter((item) => item.score >= Math.min(2, tokens.length))
+        .sort((a, b) => b.score - a.score);
+
+      if (!ranked.length) return null;
+      const best = ranked[0];
+      return {
+        document: best.document,
+        matchedTerms: best.matched,
+        excerpt: excerpt(best.document.text, best.matchedTerms?.[0])
+      };
+    }
+  };
+}
+
+export async function resolveHelpdeskAnswer({
+  message,
+  history,
+  knowledgeBase,
+  openAiResponder
+}) {
+  const localMatch = knowledgeBase.search(message);
+  if (localMatch) {
+    return {
+      source: "local_pdf",
+      answer:
+        `I found this in ${localMatch.document.originalName}:\n\n` +
+        `${localMatch.excerpt}\n\n` +
+        "If this does not solve it, add a little more detail and I will keep checking the local PDF library first."
+    };
+  }
+
+  if (openAiResponder) {
+    try {
+      const answer = await openAiResponder({ message, history });
+      return { source: "openai", answer };
+    } catch {
+      return {
+        source: "openai_error",
+        answer: buildOfflineFallbackAnswer(message)
+      };
+    }
+  }
+
+  return {
+    source: "none",
+    answer:
+      "I could not find that in the uploaded PDF library, and the OpenAI API key is not configured yet. Please upload a relevant PDF or set OPENAI_API_KEY in .env."
+  };
+}
+
+function buildOfflineFallbackAnswer(message) {
+  const lowerMessage = message.toLowerCase();
+  const slowComputerAdvice =
+    lowerMessage.includes("slow") || lowerMessage.includes("computer")
+      ? "\n\nFor the computer slow issue, try this first:\n1. Restart the computer.\n2. Close unused browser tabs and apps.\n3. Check Task Manager for high CPU or memory usage.\n4. Make sure Windows Update is not currently installing.\n5. Free disk space if the drive is almost full.\n6. If it is still slow, note the device name and what app is slow before contacting IT."
+      : "";
+
+  return (
+    "I checked the local PDF library first, but I could not reach the OpenAI service right now. " +
+    "This is usually a network, API key, quota, or firewall issue on the server side." +
+    slowComputerAdvice
+  );
+}
+
+export function createConversationLogger({ logDir, date = currentDateString() }) {
+  const logPath = path.join(logDir, `${date}-conversation-log.md`);
+
+  return {
+    async endConversation({ sessionId, messages }) {
+      await mkdir(logDir, { recursive: true });
+      const body = [
+        `\n## Conversation ${sessionId}`,
+        `Ended: ${new Date().toISOString()}`,
+        "",
+        ...messages.map((message) => {
+          const who = message.role === "assistant" ? "Ava" : "User";
+          return `- **${who}** (${message.timestamp || "no timestamp"}): ${message.content}`;
+        }),
+        ""
+      ].join("\n");
+      await appendFile(logPath, body, "utf8");
+      return logPath;
+    }
+  };
+}

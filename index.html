@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ava IT Helpdesk ChatBot</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      if (location.protocol === "file:") {
+        document.getElementById("root").innerHTML = `
+          <main style="max-width: 720px; margin: 72px auto; padding: 32px; font-family: Inter, system-ui, sans-serif; color: #17232f; line-height: 1.5;">
+            <h1 style="margin: 0 0 12px; color: #075a70;">Ava IT Helpdesk ChatBot</h1>
+            <p>This app needs the local Node.js server so the chatbot API, PDF upload, memory, and helpdesk logs can work.</p>
+            <ol>
+              <li>Open a terminal in this folder.</li>
+              <li>Run <code style="background: #eef5f8; padding: 2px 6px; border-radius: 4px;">npm run server</code>.</li>
+              <li>Open <a href="http://127.0.0.1:3001" style="color: #075a70; font-weight: 700;">http://127.0.0.1:3001</a>.</li>
+            </ol>
+          </main>
+        `;
+      } else {
+        import("/src/client/main.jsx");
+      }
+    </script>
+  </body>
+</html>
