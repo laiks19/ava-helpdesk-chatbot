@@ -25,6 +25,7 @@ import {
   currentDateString,
   getOpenAiModel,
   resolveHelpdeskAnswer,
+  shouldWriteLocalConversationLog,
   validateAdminCredentials
 } from "./helpdesk-core.js";
 
@@ -141,7 +142,9 @@ app.post("/api/session/:sessionId/end", async (req, res) => {
   const sessionId = req.params.sessionId;
   const messages = sessions.getMessages(sessionId);
   if (messages.length) {
-    await logger.endConversation({ sessionId, messages });
+    if (shouldWriteLocalConversationLog({ isVercel })) {
+      await logger.endConversation({ sessionId, messages });
+    }
     await saveConversationLog(sessionId, messages);
   }
   await sessions.clear(sessionId);

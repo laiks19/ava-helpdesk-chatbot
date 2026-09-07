@@ -23,6 +23,10 @@ export function validateAdminCredentials({
   return String(username || "").trim() === expectedUsername && password === expectedPassword;
 }
 
+export function shouldWriteLocalConversationLog({ isVercel }) {
+  return !isVercel;
+}
+
 export function createUploadedPdfDocument({ file, text, pages, now = new Date() }) {
   const storedName = file.filename || `${safeTimestamp(now)}-${safePdfBaseName(file.originalname)}.pdf`;
   return {

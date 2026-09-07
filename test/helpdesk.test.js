@@ -11,6 +11,7 @@ import {
   getOpenAiModel,
   createUploadedPdfDocument,
   validateAdminCredentials,
+  shouldWriteLocalConversationLog,
   resolveHelpdeskAnswer
 } from "../src/server/helpdesk-core.js";
 import { connectionErrorMessage, getApiBaseUrl } from "../src/client/api-base.js";
@@ -165,4 +166,9 @@ test("admin login requires default username and password", () => {
   );
   assert.equal(validateAdminCredentials({ username: "", password: "admin123" }), false);
   assert.equal(validateAdminCredentials({ username: "admin", password: "wrong" }), false);
+});
+
+test("Vercel deployments do not write local conversation log files", () => {
+  assert.equal(shouldWriteLocalConversationLog({ isVercel: true }), false);
+  assert.equal(shouldWriteLocalConversationLog({ isVercel: false }), true);
 });
