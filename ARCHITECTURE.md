@@ -8,9 +8,9 @@ Ava is a local-first IT helpdesk chatbot. The user chat is a single-page app wit
 
 - React + Vite frontend: renders the Ava chat experience and Admin PDF Library route.
 - Express backend: exposes chat, session, admin login, PDF upload, and health APIs.
-- PDF knowledge base: uploaded files are stored in `data/pdfs/` and indexed in `data/pdf-index.json`.
-- Session memory: each browser tab gets a `sessionStorage` id so separate tabs keep separate conversations.
-- Helpdesk logs: active sessions and ended conversation transcripts are written under `helpdesklog/`.
+- PDF knowledge base: in local mode, uploaded files are stored in `data/pdfs/` and indexed in `data/pdf-index.json`; in production mode, PDF files and extracted text are stored in Supabase.
+- Session memory: each browser tab gets a `sessionStorage` id so separate tabs keep separate conversations. Active sessions persist locally or in Supabase depending on configuration.
+- Helpdesk logs: ended conversation transcripts are written under `helpdesklog/` locally or `ava_conversation_logs` in Supabase.
 
 ## Request Flow
 
@@ -28,4 +28,4 @@ The Admin page is available at `/#admin`. The default local password is `admin12
 
 ## Security Notes
 
-This is a local starter build, not a hardened production system. Admin login uses a simple password/token flow for local usage. For production, add HTTPS, real authentication, upload scanning, rate limits, and access control around logs and uploaded files.
+Admin login uses a simple password/token flow. For public production use, replace it with real authentication, upload scanning, rate limits, and stricter access control around logs and uploaded files.

@@ -49,6 +49,9 @@ export function createSessionStore({ persistPath } = {}) {
       sessions.set(sessionId, messages);
       return entry;
     },
+    setMessages(sessionId, messages) {
+      sessions.set(sessionId, [...messages]);
+    },
     async save() {
       await persist();
     },
@@ -199,9 +202,8 @@ export function createConversationLogger({ logDir, date = currentDateString() })
   const logPath = path.join(logDir, `${date}-conversation-log.md`);
 
   return {
-    async endConversation({ sessionId, messages }) {
-      await mkdir(logDir, { recursive: true });
-      const body = [
+    formatTranscript({ sessionId, messages }) {
+      return [
         `\n## Conversation ${sessionId}`,
         `Ended: ${new Date().toISOString()}`,
         "",
@@ -211,6 +213,10 @@ export function createConversationLogger({ logDir, date = currentDateString() })
         }),
         ""
       ].join("\n");
+    },
+    async endConversation({ sessionId, messages }) {
+      await mkdir(logDir, { recursive: true });
+      const body = this.formatTranscript({ sessionId, messages });
       await appendFile(logPath, body, "utf8");
       return logPath;
     }

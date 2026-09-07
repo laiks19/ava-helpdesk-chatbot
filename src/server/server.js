@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pdfParse from "pdf-parse";
 import OpenAI from "openai";
+import { createSupabaseRestClient, getSupabaseConfig, isSupabaseConfigured } from "./supabase-store.js";
 
 import {
   createConversationLogger,
@@ -25,15 +26,22 @@ const pdfDir = path.join(dataDir, "pdfs");
 const indexPath = path.join(dataDir, "pdf-index.json");
 const helpdeskLogDir = path.join(projectRoot, "helpdesklog");
 const activeSessionPath = path.join(helpdeskLogDir, "active-sessions.json");
+const isVercel = process.env.VERCEL === "1";
+const supabaseEnabled = isSupabaseConfigured();
+const supabase = supabaseEnabled
+  ? createSupabaseRestClient({ config: getSupabaseConfig() })
+  : null;
 const maxPdfFiles = 50;
 const port = process.env.PORT || 3001;
 const adminPassword = process.env.AVA_ADMIN_PASSWORD || "admin123";
 const adminToken = process.env.AVA_ADMIN_TOKEN || "ava-local-admin";
 
-await mkdir(pdfDir, { recursive: true });
-await mkdir(helpdeskLogDir, { recursive: true });
+if (!isVercel || !supabaseEnabled) {
+  await mkdir(pdfDir, { recursive: true });
+  await mkdir(helpdeskLogDir, { recursive: true });
+}
 
-const sessions = createSessionStore({ persistPath: activeSessionPath });
+const sessions = createSessionStore({ persistPath: supabaseEnabled ? null : activeSessionPath });
 await sessions.load();
 
 const knowledgeBase = createKnowledgeBase(await loadIndex());
@@ -52,7 +60,7 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({
-  storage,
+  storage: supabaseEnabled ? multer.memoryStorage() : storage,
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf"));
   },
@@ -68,7 +76,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     pdfCount: knowledgeBase.count(),
     aiConfigured: hasUsableOpenAiKey(),
-    aiModel: getOpenAiModel()
+    aiModel: getOpenAiModel(),
+    persistence: supabaseEnabled ? "supabase" : "local"
   });
 });
 
@@ -81,6 +90,7 @@ app.post("/api/chat", async (req, res) => {
       return;
     }
 
+    await hydrateSession(sessionId);
     const userMessage = sessions.addMessage(sessionId, { role: "user", content: message });
     const history = sessions.getMessages(sessionId);
     const result = await resolveHelpdeskAnswer({
@@ -95,6 +105,7 @@ app.post("/api/chat", async (req, res) => {
       source: result.source
     });
     await sessions.save();
+    await saveSession(sessionId);
 
     res.json({
       sessionId,
@@ -108,7 +119,9 @@ app.post("/api/chat", async (req, res) => {
 });
 
 app.get("/api/session/:sessionId", (req, res) => {
+  hydrateSession(req.params.sessionId).then(() => {
   res.json({ messages: sessions.getMessages(req.params.sessionId) });
+  });
 });
 
 app.post("/api/session/:sessionId/end", async (req, res) => {
@@ -116,8 +129,10 @@ app.post("/api/session/:sessionId/end", async (req, res) => {
   const messages = sessions.getMessages(sessionId);
   if (messages.length) {
     await logger.endConversation({ sessionId, messages });
+    await saveConversationLog(sessionId, messages);
   }
   await sessions.clear(sessionId);
+  if (supabase) await supabase.deleteSession(sessionId);
   res.json({ ok: true, archivedMessages: messages.length });
 });
 
@@ -144,7 +159,7 @@ app.post("/api/admin/pdfs", requireAdmin, upload.array("pdfs", maxPdfFiles), asy
 
   const indexed = [];
   for (const file of incoming) {
-    const buffer = await readFile(file.path);
+    const buffer = file.buffer || (await readFile(file.path));
     const parsed = await pdfParse(buffer);
     const document = {
       id: file.filename,
@@ -156,6 +171,14 @@ app.post("/api/admin/pdfs", requireAdmin, upload.array("pdfs", maxPdfFiles), asy
       pages: parsed.numpages || 0
     };
     knowledgeBase.addDocument(document);
+    if (supabase) {
+      await supabase.uploadPdf({
+        storedName: document.storedName,
+        buffer,
+        contentType: file.mimetype
+      });
+      await supabase.saveDocument(document);
+    }
     indexed.push({ ...document, text: undefined });
   }
   await saveIndex();
@@ -168,11 +191,18 @@ if (fs.existsSync(distDir)) {
   app.use((_req, res) => res.sendFile(path.join(distDir, "index.html")));
 }
 
-app.listen(port, () => {
-  console.log(`Ava helpdesk server running on http://127.0.0.1:${port}`);
-});
+if (!isVercel) {
+  app.listen(port, () => {
+    console.log(`Ava helpdesk server running on http://127.0.0.1:${port}`);
+  });
+}
+
+export { app };
 
 async function loadIndex() {
+  if (supabase) {
+    return supabase.loadDocuments();
+  }
   try {
     const raw = await readFile(indexPath, "utf8");
     return JSON.parse(raw);
@@ -183,7 +213,28 @@ async function loadIndex() {
 }
 
 async function saveIndex() {
+  if (supabase) return;
   await writeFile(indexPath, JSON.stringify(knowledgeBase.exportDocuments(), null, 2), "utf8");
+}
+
+async function hydrateSession(sessionId) {
+  if (!supabase || sessions.getMessages(sessionId).length) return;
+  const messages = await supabase.getSession(sessionId);
+  if (messages.length) sessions.setMessages(sessionId, messages);
+}
+
+async function saveSession(sessionId) {
+  if (!supabase) return;
+  await supabase.saveSession(sessionId, sessions.getMessages(sessionId));
+}
+
+async function saveConversationLog(sessionId, messages) {
+  if (!supabase) return;
+  await supabase.saveConversationLog({
+    sessionId,
+    messages,
+    transcript: logger.formatTranscript({ sessionId, messages })
+  });
 }
 
 function requireAdmin(req, res, next) {

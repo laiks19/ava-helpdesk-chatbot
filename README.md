@@ -23,6 +23,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 - pdf-parse for PDF text extraction
 - OpenAI Node SDK for fallback answers
 - Default OpenAI fallback model: `gpt-4o-mini`
+- Optional Supabase REST/Storage persistence for production hosting
 - Node.js built-in test runner
 
 ## How To Run
@@ -39,6 +40,9 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
    OPENAI_API_KEY=your_openai_api_key_here
    OPENAI_MODEL=gpt-4o-mini
    AVA_ADMIN_PASSWORD=admin123
+   SUPABASE_URL=your_supabase_project_url
+   SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+   SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
    ```
 
 3. Start the app:
@@ -95,6 +99,21 @@ helpdesklog/YYYY-MM-DD-conversation-log.md
 ```
 
 When a user clicks **End conversation**, Ava writes the transcript and deletes that tab session from active memory.
+
+## Supabase Setup
+
+For Vercel production, create a Supabase project, run `supabase/schema.sql` in the SQL editor, and create a private Storage bucket named `helpdesk-pdfs`. Then set these Vercel environment variables:
+
+```env
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+AVA_ADMIN_PASSWORD=admin123
+```
+
+When Supabase variables are set, Ava stores PDF metadata/text, active sessions, conversation logs, and uploaded PDF files in Supabase. Without them, Ava keeps using local `data/` and `helpdesklog/`.
 
 ## Testing
 
