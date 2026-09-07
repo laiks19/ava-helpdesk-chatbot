@@ -14,6 +14,40 @@ export function getOpenAiModel(env = process.env) {
   return env.OPENAI_MODEL || "gpt-4o-mini";
 }
 
+export function validateAdminCredentials({
+  username,
+  password,
+  expectedUsername = "admin",
+  expectedPassword = "admin123"
+}) {
+  return String(username || "").trim() === expectedUsername && password === expectedPassword;
+}
+
+export function createUploadedPdfDocument({ file, text, pages, now = new Date() }) {
+  const storedName = file.filename || `${safeTimestamp(now)}-${safePdfBaseName(file.originalname)}.pdf`;
+  return {
+    id: storedName,
+    originalName: file.originalname,
+    storedName,
+    size: file.size,
+    uploadedAt: now.toISOString(),
+    text: text || "",
+    pages: pages || 0
+  };
+}
+
+function safeTimestamp(date) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function safePdfBaseName(originalName = "document.pdf") {
+  return path
+    .basename(originalName, path.extname(originalName))
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "document";
+}
+
 export function createSessionStore({ persistPath } = {}) {
   const sessions = new Map();
 

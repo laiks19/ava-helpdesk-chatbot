@@ -35,6 +35,11 @@ export function createSupabaseRestClient({ config = getSupabaseConfig(), fetchIm
       throw new Error(`Supabase request failed (${response.status}): ${details}`);
     }
     if (response.status === 204) return null;
+    if (typeof response.text === "function") {
+      const text = await response.text();
+      const trimmed = text.trim();
+      return trimmed ? JSON.parse(trimmed) : null;
+    }
     return response.json();
   }
 
@@ -105,6 +110,32 @@ export function createSupabaseRestClient({ config = getSupabaseConfig(), fetchIm
       }
     }
   };
+}
+
+export async function loadSupabaseDocumentsSafely(supabaseClient) {
+  try {
+    return await supabaseClient.loadDocuments();
+  } catch (error) {
+    console.warn(`Supabase document load skipped: ${error.message || "unknown error"}`);
+    return [];
+  }
+}
+
+export async function getSupabaseSessionSafely(supabaseClient, sessionId) {
+  try {
+    return await supabaseClient.getSession(sessionId);
+  } catch (error) {
+    console.warn(`Supabase session load skipped: ${error.message || "unknown error"}`);
+    return [];
+  }
+}
+
+export async function saveSupabaseSessionSafely(supabaseClient, sessionId, messages) {
+  try {
+    await supabaseClient.saveSession(sessionId, messages);
+  } catch (error) {
+    console.warn(`Supabase session save skipped: ${error.message || "unknown error"}`);
+  }
 }
 
 function toDocumentRow(document) {

@@ -34,16 +34,19 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
    npm install
    ```
 
-2. Update `.env` with your OpenAI API key when you want cloud fallback:
+2. Keep `.env` as placeholders, then put real local secrets in `.env.local`:
 
    ```env
    OPENAI_API_KEY=your_openai_api_key_here
    OPENAI_MODEL=gpt-4o-mini
+   AVA_ADMIN_USERNAME=admin
    AVA_ADMIN_PASSWORD=admin123
    SUPABASE_URL=your_supabase_project_url
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
    SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
    ```
+
+   `.env.local` is ignored by Git and overrides `.env` when the server starts.
 
 3. Start the app:
 
@@ -60,13 +63,14 @@ Do not double-click `index.html` to run the chatbot. Ava needs the local server 
 
 ## Admin Login
 
-The default local Admin password is:
+The default local Admin login is:
 
 ```text
-admin123
+Username: admin
+Password: admin123
 ```
 
-Change it by setting `AVA_ADMIN_PASSWORD` in `.env`.
+Change it by setting `AVA_ADMIN_USERNAME` and `AVA_ADMIN_PASSWORD` in `.env.local`.
 
 ## Folder Structure
 
@@ -102,7 +106,7 @@ When a user clicks **End conversation**, Ava writes the transcript and deletes t
 
 ## Supabase Setup
 
-For Vercel production, create a Supabase project, run `supabase/schema.sql` in the SQL editor, and create a private Storage bucket named `helpdesk-pdfs`. Then set these Vercel environment variables:
+For Vercel production, create a Supabase project, run `supabase/schema.sql` in the SQL editor, and create a private Storage bucket named `helpdesk-pdfs`. Then set these values as Vercel Environment Variables, preferably as sensitive/secret values:
 
 ```env
 SUPABASE_URL=your_supabase_project_url
@@ -110,6 +114,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o-mini
+AVA_ADMIN_USERNAME=admin
 AVA_ADMIN_PASSWORD=admin123
 ```
 

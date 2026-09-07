@@ -9,6 +9,8 @@ import {
   createKnowledgeBase,
   createConversationLogger,
   getOpenAiModel,
+  createUploadedPdfDocument,
+  validateAdminCredentials,
   resolveHelpdeskAnswer
 } from "../src/server/helpdesk-core.js";
 import { connectionErrorMessage, getApiBaseUrl } from "../src/client/api-base.js";
@@ -125,4 +127,42 @@ test("published Sites frontend points API calls to the local Ava server", () => 
   assert.equal(getApiBaseUrl({ hostname: "ava-helpdesk-chatbot.laiks19.chatgpt.site" }), "http://127.0.0.1:3001");
   assert.equal(getApiBaseUrl({ hostname: "127.0.0.1" }), "");
   assert.match(connectionErrorMessage(), /npm run server/);
+});
+
+test("chat page keeps only the conversation interface", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+  const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";
+
+  assert.doesNotMatch(chatPage, /status-rail/);
+  assert.doesNotMatch(chatPage, /quiet-panel/);
+  assert.doesNotMatch(chatPage, /<Header \/>/);
+  assert.match(chatPage, /chat-panel/);
+});
+
+test("uploaded PDF document metadata gets a stored name when upload is memory backed", () => {
+  const document = createUploadedPdfDocument({
+    file: {
+      originalname: "Printer Setup Guide.pdf",
+      size: 1234
+    },
+    text: "Printer setup steps",
+    pages: 2,
+    now: new Date("2026-09-07T09:00:00.000Z")
+  });
+
+  assert.equal(document.id, "2026-09-07T09-00-00-000Z-Printer-Setup-Guide.pdf");
+  assert.equal(document.storedName, "2026-09-07T09-00-00-000Z-Printer-Setup-Guide.pdf");
+  assert.equal(document.originalName, "Printer Setup Guide.pdf");
+});
+
+test("admin login requires default username and password", () => {
+  assert.equal(
+    validateAdminCredentials({
+      username: "admin",
+      password: "admin123"
+    }),
+    true
+  );
+  assert.equal(validateAdminCredentials({ username: "", password: "admin123" }), false);
+  assert.equal(validateAdminCredentials({ username: "admin", password: "wrong" }), false);
 });

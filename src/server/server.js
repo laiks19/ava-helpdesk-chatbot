@@ -1,4 +1,4 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
@@ -8,19 +8,31 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pdfParse from "pdf-parse";
 import OpenAI from "openai";
-import { createSupabaseRestClient, getSupabaseConfig, isSupabaseConfigured } from "./supabase-store.js";
+import {
+  createSupabaseRestClient,
+  getSupabaseConfig,
+  getSupabaseSessionSafely,
+  isSupabaseConfigured,
+  loadSupabaseDocumentsSafely,
+  saveSupabaseSessionSafely
+} from "./supabase-store.js";
 
 import {
   createConversationLogger,
   createKnowledgeBase,
   createSessionStore,
+  createUploadedPdfDocument,
   currentDateString,
   getOpenAiModel,
-  resolveHelpdeskAnswer
+  resolveHelpdeskAnswer,
+  validateAdminCredentials
 } from "./helpdesk-core.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
+dotenv.config({ path: path.join(projectRoot, ".env") });
+dotenv.config({ path: path.join(projectRoot, ".env.local"), override: true });
+
 const dataDir = path.join(projectRoot, "data");
 const pdfDir = path.join(dataDir, "pdfs");
 const indexPath = path.join(dataDir, "pdf-index.json");
@@ -33,6 +45,7 @@ const supabase = supabaseEnabled
   : null;
 const maxPdfFiles = 50;
 const port = process.env.PORT || 3001;
+const adminUsername = process.env.AVA_ADMIN_USERNAME || "admin";
 const adminPassword = process.env.AVA_ADMIN_PASSWORD || "admin123";
 const adminToken = process.env.AVA_ADMIN_TOKEN || "ava-local-admin";
 
@@ -137,11 +150,18 @@ app.post("/api/session/:sessionId/end", async (req, res) => {
 });
 
 app.post("/api/admin/login", (req, res) => {
-  if (req.body?.password === adminPassword) {
+  if (
+    validateAdminCredentials({
+      username: req.body?.username,
+      password: req.body?.password,
+      expectedUsername: adminUsername,
+      expectedPassword: adminPassword
+    })
+  ) {
     res.json({ token: adminToken });
     return;
   }
-  res.status(401).json({ error: "Invalid admin password." });
+  res.status(401).json({ error: "Invalid admin username or password." });
 });
 
 app.get("/api/admin/pdfs", requireAdmin, (_req, res) => {
@@ -149,40 +169,54 @@ app.get("/api/admin/pdfs", requireAdmin, (_req, res) => {
 });
 
 app.post("/api/admin/pdfs", requireAdmin, upload.array("pdfs", maxPdfFiles), async (req, res) => {
-  const existing = knowledgeBase.count();
   const incoming = req.files || [];
-  if (existing + incoming.length > maxPdfFiles) {
-    for (const file of incoming) fs.rmSync(file.path, { force: true });
-    res.status(400).json({ error: `Ava supports up to ${maxPdfFiles} PDF files total.` });
+  try {
+    const existing = knowledgeBase.count();
+    if (!incoming.length) {
+      res.status(400).json({ error: "Select at least one PDF file to upload." });
+      return;
+    }
+
+    if (existing + incoming.length > maxPdfFiles) {
+      cleanupUploadedFiles(incoming);
+      res.status(400).json({ error: `Ava supports up to ${maxPdfFiles} PDF files total.` });
+      return;
+    }
+
+    const indexed = [];
+    for (const file of incoming) {
+      const buffer = file.buffer || (await readFile(file.path));
+      const parsed = await pdfParse(buffer);
+      const document = createUploadedPdfDocument({
+        file,
+        text: parsed.text,
+        pages: parsed.numpages
+      });
+      knowledgeBase.addDocument(document);
+      if (supabase) {
+        await supabase.uploadPdf({
+          storedName: document.storedName,
+          buffer,
+          contentType: file.mimetype
+        });
+        await supabase.saveDocument(document);
+      }
+      indexed.push({ ...document, text: undefined });
+    }
+    await saveIndex();
+    res.json({ indexed, files: knowledgeBase.listDocuments() });
+  } catch (error) {
+    cleanupUploadedFiles(incoming);
+    res.status(500).json({ error: uploadErrorMessage(error) });
+  }
+});
+
+app.use((error, req, res, next) => {
+  if (!req.path.startsWith("/api/")) {
+    next(error);
     return;
   }
-
-  const indexed = [];
-  for (const file of incoming) {
-    const buffer = file.buffer || (await readFile(file.path));
-    const parsed = await pdfParse(buffer);
-    const document = {
-      id: file.filename,
-      originalName: file.originalname,
-      storedName: file.filename,
-      size: file.size,
-      uploadedAt: new Date().toISOString(),
-      text: parsed.text || "",
-      pages: parsed.numpages || 0
-    };
-    knowledgeBase.addDocument(document);
-    if (supabase) {
-      await supabase.uploadPdf({
-        storedName: document.storedName,
-        buffer,
-        contentType: file.mimetype
-      });
-      await supabase.saveDocument(document);
-    }
-    indexed.push({ ...document, text: undefined });
-  }
-  await saveIndex();
-  res.json({ indexed, files: knowledgeBase.listDocuments() });
+  res.status(error.statusCode || 500).json({ error: uploadErrorMessage(error) });
 });
 
 const distDir = path.join(projectRoot, "dist");
@@ -201,7 +235,7 @@ export { app };
 
 async function loadIndex() {
   if (supabase) {
-    return supabase.loadDocuments();
+    return loadSupabaseDocumentsSafely(supabase);
   }
   try {
     const raw = await readFile(indexPath, "utf8");
@@ -219,13 +253,13 @@ async function saveIndex() {
 
 async function hydrateSession(sessionId) {
   if (!supabase || sessions.getMessages(sessionId).length) return;
-  const messages = await supabase.getSession(sessionId);
+  const messages = await getSupabaseSessionSafely(supabase, sessionId);
   if (messages.length) sessions.setMessages(sessionId, messages);
 }
 
 async function saveSession(sessionId) {
   if (!supabase) return;
-  await supabase.saveSession(sessionId, sessions.getMessages(sessionId));
+  await saveSupabaseSessionSafely(supabase, sessionId, sessions.getMessages(sessionId));
 }
 
 async function saveConversationLog(sessionId, messages) {
@@ -243,6 +277,20 @@ function requireAdmin(req, res, next) {
     return;
   }
   res.status(401).json({ error: "Admin login required." });
+}
+
+function cleanupUploadedFiles(files) {
+  for (const file of files) {
+    if (file.path) fs.rmSync(file.path, { force: true });
+  }
+}
+
+function uploadErrorMessage(error) {
+  const message = error.message || "Unable to upload PDF files.";
+  if (/pdf/i.test(message)) {
+    return "Ava could not read one of the PDF files. Please upload a valid, text-readable PDF.";
+  }
+  return message;
 }
 
 function hasUsableOpenAiKey() {

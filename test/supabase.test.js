@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import {
   createSupabaseRestClient,
   getSupabaseConfig,
-  isSupabaseConfigured
+  isSupabaseConfigured,
+  loadSupabaseDocumentsSafely,
+  getSupabaseSessionSafely,
+  saveSupabaseSessionSafely
 } from "../src/server/supabase-store.js";
 
 test("Supabase config stays disabled until URL and service role key are configured", () => {
@@ -54,4 +57,45 @@ test("Supabase REST client writes sessions with upsert semantics", async () => {
   assert.equal(calls[0].options.method, "POST");
   assert.equal(calls[0].options.headers.Prefer, "resolution=merge-duplicates");
   assert.match(calls[0].options.body, /tab-a/);
+});
+
+test("Supabase REST client accepts successful empty JSON responses", async () => {
+  const client = createSupabaseRestClient({
+    config: {
+      url: "https://example.supabase.co",
+      key: "service-role",
+      bucket: "helpdesk-pdfs"
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 201,
+      text: async () => "  \n"
+    })
+  });
+
+  await assert.doesNotReject(() => client.saveSession("tab-a", [{ role: "user", content: "hello" }]));
+});
+
+test("Supabase document startup failures fall back to an empty library", async () => {
+  const documents = await loadSupabaseDocumentsSafely({
+    loadDocuments: async () => {
+      throw new Error("fetch failed");
+    }
+  });
+
+  assert.deepEqual(documents, []);
+});
+
+test("Supabase session persistence failures do not block chat replies", async () => {
+  const client = {
+    getSession: async () => {
+      throw new Error("Unexpected end of JSON input");
+    },
+    saveSession: async () => {
+      throw new Error("Unexpected end of JSON input");
+    }
+  };
+
+  assert.deepEqual(await getSupabaseSessionSafely(client, "tab-a"), []);
+  await assert.doesNotReject(() => saveSupabaseSessionSafely(client, "tab-a", []));
 });

@@ -21,10 +21,10 @@ const api = {
   async end(sessionId) {
     return request(`/api/session/${sessionId}/end`, { method: "POST" });
   },
-  async adminLogin(password) {
+  async adminLogin(username, password) {
     return request("/api/admin/login", {
       method: "POST",
-      body: JSON.stringify({ password })
+      body: JSON.stringify({ username, password })
     });
   },
   async pdfs(token) {
@@ -103,13 +103,11 @@ function ChatPage() {
     }
   ]);
   const [message, setMessage] = useState("");
-  const [status, setStatus] = useState({ ok: false, pdfCount: 0, aiConfigured: false, aiModel: "" });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
-    api.health().then(setStatus).catch(() => setStatus({ ok: false, pdfCount: 0, aiConfigured: false, aiModel: "" }));
     api.session(sessionId).then((data) => {
       if (data.messages?.length) setMessages(data.messages);
     });
@@ -160,58 +158,32 @@ function ChatPage() {
 
   return (
     <main className="app-shell">
-      <Header />
-      <section className="workspace">
-        <aside className="status-rail">
-          <h2>Knowledge & Status</h2>
-          <SourceCard title="PDF Knowledge Base" tone="local" status={`${status.pdfCount} files indexed`} />
-          <SourceCard title="AI Fallback" tone="cloud" status={status.aiConfigured ? `Ready: ${status.aiModel}` : "Add OPENAI_API_KEY"} />
-          <div className="system-list">
-            <div><span>ChatBot</span><b>Operational</b></div>
-            <div><span>PDF Index</span><b>{status.pdfCount ? "Up to date" : "Waiting for PDFs"}</b></div>
-            <div><span>Tab Memory</span><b>Isolated</b></div>
-          </div>
-          <div className="info-panel">
-            <strong>How Ava works</strong>
-            <p>Ava checks uploaded local PDFs first. If no match is found, Ava uses the OpenAI API key when it is configured.</p>
-          </div>
-        </aside>
-
-        <section className="chat-panel">
-          <div className="panel-title">
-            <h2>Ask Ava</h2>
-            <span>{sessionId.slice(0, 8)}</span>
-          </div>
-          <div className="messages" ref={scrollRef}>
-            {messages.map((item, index) => (
-              <Message key={`${item.timestamp}-${index}`} message={item} />
-            ))}
-            {busy && <div className="typing">Ava is checking the PDF library...</div>}
-          </div>
-          {notice && <p className="notice">{notice}</p>}
-          <form className="composer" onSubmit={sendMessage}>
-            <textarea
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Type your message here..."
-              rows="2"
-            />
-            <button className="icon-button pressable" type="submit" disabled={busy} aria-label="Send message">
-              <span>➤</span>
-            </button>
-          </form>
-          <button className="end-button pressable" type="button" onClick={endConversation} disabled={busy}>
-            End conversation
+      <section className="chat-panel">
+        <div className="panel-title">
+          <h2>Ask Ava</h2>
+          <span>{sessionId.slice(0, 8)}</span>
+        </div>
+        <div className="messages" ref={scrollRef}>
+          {messages.map((item, index) => (
+            <Message key={`${item.timestamp}-${index}`} message={item} />
+          ))}
+          {busy && <div className="typing">Ava is checking the PDF library...</div>}
+        </div>
+        {notice && <p className="notice">{notice}</p>}
+        <form className="composer" onSubmit={sendMessage}>
+          <textarea
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            placeholder="Type your message here..."
+            rows="2"
+          />
+          <button className="icon-button pressable" type="submit" disabled={busy} aria-label="Send message">
+            <span>➤</span>
           </button>
-        </section>
-
-        <aside className="quiet-panel">
-          <div className="empty-state">
-            <RobotIcon />
-            <h2>Ava remembers this tab</h2>
-            <p>Refresh the page and this tab’s conversation remains available until you end it.</p>
-          </div>
-        </aside>
+        </form>
+        <button className="end-button pressable" type="button" onClick={endConversation} disabled={busy}>
+          End conversation
+        </button>
       </section>
     </main>
   );
@@ -227,18 +199,6 @@ function Header() {
       </a>
       <a className="admin-link pressable" href="#admin">Admin PDF Library</a>
     </header>
-  );
-}
-
-function SourceCard({ title, status, tone }) {
-  return (
-    <div className={`source-card ${tone}`}>
-      <div className="source-icon">{tone === "local" ? "PDF" : "AI"}</div>
-      <div>
-        <strong>{title}</strong>
-        <span>{status}</span>
-      </div>
-    </div>
   );
 }
 
@@ -261,6 +221,7 @@ function Message({ message }) {
 }
 
 function AdminPage() {
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState(localStorage.getItem("ava-admin-token") || "");
   const [files, setFiles] = useState([]);
@@ -281,7 +242,7 @@ function AdminPage() {
     setBusy(true);
     setNotice("");
     try {
-      const response = await api.adminLogin(password);
+      const response = await api.adminLogin(username, password);
       localStorage.setItem("ava-admin-token", response.token);
       setToken(response.token);
     } catch (error) {
@@ -323,8 +284,12 @@ function AdminPage() {
         {!token ? (
           <form className="login-form" onSubmit={login}>
             <label>
+              Admin username
+              <input value={username} onChange={(event) => setUsername(event.target.value)} type="text" placeholder="admin" autoComplete="username" />
+            </label>
+            <label>
               Admin password
-              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="admin123" />
+              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="admin123" autoComplete="current-password" />
             </label>
             <button className="primary-button pressable" type="submit" disabled={busy}>Log in</button>
           </form>
