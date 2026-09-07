@@ -338,6 +338,13 @@ a {
   color: #526173;
 }
 
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .login-form {
   max-width: 420px;
   display: grid;

@@ -17,7 +17,7 @@ export function getOpenAiModel(env = process.env) {
 export function validateAdminCredentials({
   username,
   password,
-  expectedUsername = "admin",
+  expectedUsername = "Admin",
   expectedPassword = "admin123"
 }) {
   return String(username || "").trim() === expectedUsername && password === expectedPassword;

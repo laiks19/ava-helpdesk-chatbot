@@ -156,16 +156,24 @@ test("uploaded PDF document metadata gets a stored name when upload is memory ba
   assert.equal(document.originalName, "Printer Setup Guide.pdf");
 });
 
-test("admin login requires default username and password", () => {
+test("admin login requires default Admin username and password", () => {
   assert.equal(
     validateAdminCredentials({
-      username: "admin",
+      username: "Admin",
       password: "admin123"
     }),
     true
   );
   assert.equal(validateAdminCredentials({ username: "", password: "admin123" }), false);
-  assert.equal(validateAdminCredentials({ username: "admin", password: "wrong" }), false);
+  assert.equal(validateAdminCredentials({ username: "Admin", password: "wrong" }), false);
+});
+
+test("Admin page does not persist login across refreshes", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+  const adminPage = source.match(/function AdminPage\(\) \{[\s\S]*?\nfunction formatBytes/)?.[0] || "";
+
+  assert.doesNotMatch(adminPage, /localStorage/);
+  assert.match(adminPage, /useState\(""\)/);
 });
 
 test("Vercel deployments do not write local conversation log files", () => {

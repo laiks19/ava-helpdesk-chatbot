@@ -39,7 +39,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
    ```env
    OPENAI_API_KEY=your_openai_api_key_here
    OPENAI_MODEL=gpt-4o-mini
-   AVA_ADMIN_USERNAME=admin
+   AVA_ADMIN_USERNAME=Admin
    AVA_ADMIN_PASSWORD=admin123
    SUPABASE_URL=your_supabase_project_url
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
@@ -66,7 +66,7 @@ Do not double-click `index.html` to run the chatbot. Ava needs the local server 
 The default local Admin login is:
 
 ```text
-Username: admin
+Username: Admin
 Password: admin123
 ```
 
@@ -114,7 +114,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o-mini
-AVA_ADMIN_USERNAME=admin
+AVA_ADMIN_USERNAME=Admin
 AVA_ADMIN_PASSWORD=admin123
 ```
 

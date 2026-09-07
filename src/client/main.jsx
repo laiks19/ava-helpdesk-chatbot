@@ -221,9 +221,9 @@ function Message({ message }) {
 }
 
 function AdminPage() {
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("Admin");
   const [password, setPassword] = useState("");
-  const [token, setToken] = useState(localStorage.getItem("ava-admin-token") || "");
+  const [token, setToken] = useState("");
   const [files, setFiles] = useState([]);
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -232,7 +232,6 @@ function AdminPage() {
   useEffect(() => {
     if (!token) return;
     api.pdfs(token).then((data) => setFiles(data.files || [])).catch(() => {
-      localStorage.removeItem("ava-admin-token");
       setToken("");
     });
   }, [token]);
@@ -243,7 +242,6 @@ function AdminPage() {
     setNotice("");
     try {
       const response = await api.adminLogin(username, password);
-      localStorage.setItem("ava-admin-token", response.token);
       setToken(response.token);
     } catch (error) {
       setNotice(error.message);
@@ -278,14 +276,21 @@ function AdminPage() {
             <h1>Admin PDF Library</h1>
             <p>Upload up to 50 PDF files for Ava to search before using AI fallback.</p>
           </div>
-          <a className="admin-link pressable" href="#">Back to Chat</a>
+          <div className="admin-actions">
+            {token && (
+              <button className="admin-link pressable" type="button" onClick={() => setToken("")}>
+                Log out
+              </button>
+            )}
+            <a className="admin-link pressable" href="#">Back to Chat</a>
+          </div>
         </div>
 
         {!token ? (
           <form className="login-form" onSubmit={login}>
             <label>
               Admin username
-              <input value={username} onChange={(event) => setUsername(event.target.value)} type="text" placeholder="admin" autoComplete="username" />
+              <input value={username} onChange={(event) => setUsername(event.target.value)} type="text" placeholder="Admin" autoComplete="username" />
             </label>
             <label>
               Admin password
