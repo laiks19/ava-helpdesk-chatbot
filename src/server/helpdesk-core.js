@@ -14,6 +14,11 @@ export function getOpenAiModel(env = process.env) {
   return env.OPENAI_MODEL || "gpt-4o-mini";
 }
 
+export function getAdminPassword(env = process.env) {
+  const password = String(env.AVA_ADMIN_PASSWORD || "").trim();
+  return password && password !== "change_this_admin_password" ? password : "admin123";
+}
+
 export function validateAdminCredentials({
   username,
   password,

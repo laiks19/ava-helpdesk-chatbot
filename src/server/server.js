@@ -23,6 +23,7 @@ import {
   createSessionStore,
   createUploadedPdfDocument,
   currentDateString,
+  getAdminPassword,
   getOpenAiModel,
   resolveHelpdeskAnswer,
   shouldWriteLocalConversationLog,
@@ -47,7 +48,7 @@ const supabase = supabaseEnabled
 const maxPdfFiles = 50;
 const port = process.env.PORT || 3001;
 const adminUsername = process.env.AVA_ADMIN_USERNAME || "Admin";
-const adminPassword = process.env.AVA_ADMIN_PASSWORD || "admin123";
+const adminPassword = getAdminPassword();
 const adminToken = process.env.AVA_ADMIN_TOKEN || "ava-local-admin";
 
 if (!isVercel || !supabaseEnabled) {

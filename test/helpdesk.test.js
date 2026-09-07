@@ -9,6 +9,7 @@ import {
   createKnowledgeBase,
   createConversationLogger,
   getOpenAiModel,
+  getAdminPassword,
   createUploadedPdfDocument,
   validateAdminCredentials,
   shouldWriteLocalConversationLog,
@@ -166,6 +167,12 @@ test("admin login requires default Admin username and password", () => {
   );
   assert.equal(validateAdminCredentials({ username: "", password: "admin123" }), false);
   assert.equal(validateAdminCredentials({ username: "Admin", password: "wrong" }), false);
+});
+
+test("admin password placeholder falls back to admin123", () => {
+  assert.equal(getAdminPassword({}), "admin123");
+  assert.equal(getAdminPassword({ AVA_ADMIN_PASSWORD: "change_this_admin_password" }), "admin123");
+  assert.equal(getAdminPassword({ AVA_ADMIN_PASSWORD: "custom-password" }), "custom-password");
 });
 
 test("Admin page does not persist login across refreshes", async () => {
