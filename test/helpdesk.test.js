@@ -176,6 +176,13 @@ test("Admin page does not persist login across refreshes", async () => {
   assert.match(adminPage, /useState\(""\)/);
 });
 
+test("Admin page does not display the default password", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+  const adminPage = source.match(/function AdminPage\(\) \{[\s\S]*?\nfunction formatBytes/)?.[0] || "";
+
+  assert.doesNotMatch(adminPage, /placeholder="admin123"/);
+});
+
 test("Vercel deployments do not write local conversation log files", () => {
   assert.equal(shouldWriteLocalConversationLog({ isVercel: true }), false);
   assert.equal(shouldWriteLocalConversationLog({ isVercel: false }), true);

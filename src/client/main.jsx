@@ -294,7 +294,7 @@ function AdminPage() {
             </label>
             <label>
               Admin password
-              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="admin123" autoComplete="current-password" />
+              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Enter password" autoComplete="current-password" />
             </label>
             <button className="primary-button pressable" type="submit" disabled={busy}>Log in</button>
           </form>
