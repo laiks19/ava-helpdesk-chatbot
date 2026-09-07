@@ -9,10 +9,17 @@ export function isSupabaseConfigured(env = process.env) {
 
 export function getSupabaseConfig(env = process.env) {
   return {
-    url: String(env.SUPABASE_URL || "").replace(/\/+$/, ""),
+    url: normalizeSupabaseUrl(env.SUPABASE_URL),
     key: env.SUPABASE_SERVICE_ROLE_KEY || "",
     bucket: env.SUPABASE_STORAGE_BUCKET || "helpdesk-pdfs"
   };
+}
+
+function normalizeSupabaseUrl(url) {
+  return String(url || "")
+    .replace(/\/+$/, "")
+    .replace(/\/rest\/v1$/i, "")
+    .replace(/\/storage\/v1$/i, "");
 }
 
 export function createSupabaseRestClient({ config = getSupabaseConfig(), fetchImpl = fetch } = {}) {

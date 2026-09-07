@@ -32,6 +32,15 @@ test("Supabase config normalizes the REST endpoint and default bucket", () => {
   assert.equal(config.bucket, "helpdesk-pdfs");
 });
 
+test("Supabase config accepts a copied REST endpoint URL", () => {
+  const config = getSupabaseConfig({
+    SUPABASE_URL: "https://example.supabase.co/rest/v1/",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role"
+  });
+
+  assert.equal(config.url, "https://example.supabase.co");
+});
+
 test("Supabase REST client writes sessions with upsert semantics", async () => {
   const calls = [];
   const client = createSupabaseRestClient({
