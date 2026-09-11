@@ -85,6 +85,36 @@ test("Supabase REST client accepts successful empty JSON responses", async () =>
   await assert.doesNotReject(() => client.saveSession("tab-a", [{ role: "user", content: "hello" }]));
 });
 
+test("Supabase client deletes PDFs from storage and document table", async () => {
+  const calls = [];
+  const client = createSupabaseRestClient({
+    config: {
+      url: "https://example.supabase.co",
+      key: "service-role",
+      bucket: "helpdesk-pdfs"
+    },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 204,
+        text: async () => ""
+      };
+    }
+  });
+
+  await client.deletePdf({
+    id: "doc-1",
+    storedName: "folder/printer guide.pdf"
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.match(calls[0].url, /\/storage\/v1\/object\/helpdesk-pdfs\/folder%2Fprinter%20guide\.pdf/);
+  assert.equal(calls[1].options.method, "DELETE");
+  assert.match(calls[1].url, /\/rest\/v1\/ava_documents\?id=eq\.doc-1/);
+});
+
 test("Supabase document startup failures fall back to an empty library", async () => {
   const documents = await loadSupabaseDocumentsSafely({
     loadDocuments: async () => {

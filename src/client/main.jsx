@@ -40,6 +40,12 @@ const api = {
       headers: { Authorization: `Bearer ${token}` },
       body: form
     });
+  },
+  async deletePdf(token, id) {
+    return request(`/api/admin/pdfs/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` }
+    });
   }
 };
 
@@ -71,13 +77,22 @@ function getSessionId() {
 
 function RobotIcon({ small = false }) {
   return (
-    <div className={small ? "robot robot-small" : "robot"} aria-hidden="true">
-      <span className="antenna" />
-      <span className="face">
-        <i />
-        <i />
-      </span>
-    </div>
+    <svg
+      className={small ? "ava-icon ava-icon-small" : "ava-icon"}
+      viewBox="0 0 64 64"
+      role="img"
+      aria-label="Ava assistant icon"
+    >
+      <rect className="ava-icon-shadow" x="12" y="20" width="40" height="34" rx="13" />
+      <path className="ava-icon-antenna" d="M32 20V9" />
+      <circle className="ava-icon-node" cx="32" cy="8" r="5" />
+      <rect className="ava-icon-face" x="10" y="18" width="44" height="34" rx="13" />
+      <circle className="ava-icon-eye" cx="24" cy="34" r="4" />
+      <circle className="ava-icon-eye" cx="40" cy="34" r="4" />
+      <path className="ava-icon-mouth" d="M25 43c4 3 10 3 14 0" />
+      <path className="ava-icon-ear" d="M10 31H6v9h4" />
+      <path className="ava-icon-ear" d="M54 31h4v9h-4" />
+    </svg>
   );
 }
 
@@ -204,6 +219,14 @@ function Header() {
 
 function Message({ message }) {
   const isUser = message.role === "user";
+  const sourceLabel = {
+    local_pdf: "Local PDF",
+    openai: "OpenAI",
+    openai_error: "AI unavailable",
+    out_of_scope: "IT support only",
+    helpdesk_escalation: "Contact IT"
+  }[message.source] || "Setup needed";
+
   return (
     <article className={isUser ? "message user" : "message ava"}>
       {!isUser && <RobotIcon small />}
@@ -211,9 +234,7 @@ function Message({ message }) {
         <p>{message.content}</p>
         <time>{new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
         {message.source && message.source !== "system" && (
-          <span className="source-tag">
-            {message.source === "local_pdf" ? "Local PDF" : message.source === "openai" ? "OpenAI" : message.source === "openai_error" ? "AI unavailable" : "Setup needed"}
-          </span>
+          <span className="source-tag">{sourceLabel}</span>
         )}
       </div>
     </article>
@@ -260,6 +281,21 @@ function AdminPage() {
       setFiles(response.files || []);
       setSelected([]);
       setNotice("PDF library updated.");
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deletePdf(file) {
+    if (!window.confirm(`Remove ${file.originalName} from Ava's PDF library?`)) return;
+    setBusy(true);
+    setNotice("");
+    try {
+      const response = await api.deletePdf(token, file.id);
+      setFiles(response.files || []);
+      setNotice("PDF removed from Ava's library.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -316,7 +352,7 @@ function AdminPage() {
             </form>
             <div className="library-table">
               <div className="table-head">
-                <span>File Name</span><span>Size</span><span>Pages</span><span>Status</span>
+                <span>File Name</span><span>Size</span><span>Pages</span><span>Status</span><span>Action</span>
               </div>
               {files.map((file) => (
                 <div className="table-row" key={file.id}>
@@ -324,6 +360,15 @@ function AdminPage() {
                   <span>{formatBytes(file.size)}</span>
                   <span>{file.pages || "-"}</span>
                   <span className="indexed">Indexed</span>
+                  <button
+                    className="danger-button pressable"
+                    type="button"
+                    onClick={() => deletePdf(file)}
+                    disabled={busy}
+                    aria-label={`Delete PDF ${file.originalName}`}
+                  >
+                    Delete PDF
+                  </button>
                 </div>
               ))}
               {!files.length && <p className="notice">No PDFs uploaded yet.</p>}

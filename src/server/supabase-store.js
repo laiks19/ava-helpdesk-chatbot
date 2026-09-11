@@ -115,6 +115,25 @@ export function createSupabaseRestClient({ config = getSupabaseConfig(), fetchIm
         const details = await response.text().catch(() => "");
         throw new Error(`Supabase storage upload failed (${response.status}): ${details}`);
       }
+    },
+    async deletePdf({ id, storedName }) {
+      const response = await fetchImpl(
+        `${config.url}/storage/v1/object/${config.bucket}/${encodeURIComponent(storedName)}`,
+        {
+          method: "DELETE",
+          headers: {
+            apikey: config.key,
+            Authorization: `Bearer ${config.key}`
+          }
+        }
+      );
+      if (!response.ok) {
+        const details = await response.text().catch(() => "");
+        throw new Error(`Supabase storage delete failed (${response.status}): ${details}`);
+      }
+      await request(`/rest/v1/ava_documents?id=eq.${encodeURIComponent(id)}`, {
+        method: "DELETE"
+      });
     }
   };
 }

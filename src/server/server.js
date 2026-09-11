@@ -215,6 +215,30 @@ app.post("/api/admin/pdfs", requireAdmin, upload.array("pdfs", maxPdfFiles), asy
   }
 });
 
+app.delete("/api/admin/pdfs/:id", requireAdmin, async (req, res) => {
+  const document = knowledgeBase.removeDocument(req.params.id);
+  if (!document) {
+    res.status(404).json({ error: "PDF not found." });
+    return;
+  }
+
+  try {
+    if (supabase) {
+      await supabase.deletePdf({
+        id: document.id,
+        storedName: document.storedName
+      });
+    } else if (document.storedName) {
+      fs.rmSync(path.join(pdfDir, document.storedName), { force: true });
+    }
+    await saveIndex();
+    res.json({ deleted: document.id, files: knowledgeBase.listDocuments() });
+  } catch (error) {
+    knowledgeBase.addDocument(document);
+    res.status(500).json({ error: uploadErrorMessage(error) });
+  }
+});
+
 app.use((error, req, res, next) => {
   if (!req.path.startsWith("/api/")) {
     next(error);

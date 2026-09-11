@@ -11,7 +11,7 @@ export function currentDateString(now = new Date()) {
 }
 
 export function getOpenAiModel(env = process.env) {
-  return env.OPENAI_MODEL || "gpt-4o-mini";
+  return env.OPENAI_MODEL || "gpt-4o";
 }
 
 export function getAdminPassword(env = process.env) {
@@ -155,6 +155,11 @@ export function createKnowledgeBase(initialDocuments = []) {
       if (existingIndex >= 0) documents[existingIndex] = normalized;
       else documents.push(normalized);
     },
+    removeDocument(id) {
+      const index = documents.findIndex((item) => item.id === id);
+      if (index < 0) return null;
+      return documents.splice(index, 1)[0];
+    },
     listDocuments() {
       return documents.map(({ text, ...metadata }) => ({
         ...metadata,
@@ -191,12 +196,95 @@ export function createKnowledgeBase(initialDocuments = []) {
   };
 }
 
+const itSupportPatterns = [
+  /\bit\b/i,
+  /\bhelp\s*desk\b/i,
+  /\bcomputer\b/i,
+  /\bpc\b/i,
+  /\blaptop\b/i,
+  /\bdesktop\b/i,
+  /\bprinter\b/i,
+  /\bscanner\b/i,
+  /\bmonitor\b/i,
+  /\bkeyboard\b/i,
+  /\bmouse\b/i,
+  /\bhardware\b/i,
+  /\bsoftware\b/i,
+  /\bapp\b/i,
+  /\bapplication\b/i,
+  /\bbrowser\b/i,
+  /\bemail\b/i,
+  /\boutlook\b/i,
+  /\bteams\b/i,
+  /\bzoom\b/i,
+  /\bwindows\b/i,
+  /\bmac\b/i,
+  /\biphone\b/i,
+  /\bandroid\b/i,
+  /\bvpn\b/i,
+  /\bnetwork\b/i,
+  /\bwifi\b/i,
+  /\bwi-fi\b/i,
+  /\binternet\b/i,
+  /\brouter\b/i,
+  /\bpassword\b/i,
+  /\blog\s*in\b/i,
+  /\blogin\b/i,
+  /\baccount\b/i,
+  /\baccess\b/i,
+  /\binstall\b/i,
+  /\bupdate\b/i,
+  /\berror\b/i,
+  /\bcrash\b/i,
+  /\bvirus\b/i,
+  /\bmalware\b/i,
+  /\bstorage\b/i,
+  /\bdisk\b/i,
+  /\bslow\b/i
+];
+
+export function isItSupportQuestion(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  return itSupportPatterns.some((pattern) => pattern.test(text));
+}
+
+function normalizeQuestion(message) {
+  return String(message || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function repeatedUnsolvedCount(message, history = []) {
+  const normalized = normalizeQuestion(message);
+  if (!normalized) return 0;
+  return history.filter((item) => item.role === "user" && normalizeQuestion(item.content) === normalized).length;
+}
+
 export async function resolveHelpdeskAnswer({
   message,
   history,
   knowledgeBase,
   openAiResponder
 }) {
+  if (!isItSupportQuestion(message)) {
+    return {
+      source: "out_of_scope",
+      answer:
+        "I can help with IT support questions about hardware, software, accounts, access, network, email, printers, and similar workplace technology issues. Please send an IT support question and I will help."
+    };
+  }
+
+  if (repeatedUnsolvedCount(message, history) > 5) {
+    return {
+      source: "helpdesk_escalation",
+      answer:
+        "This same issue has come up more than 5 times and may need a person to check it. Please contact IT Helpdesk. WhatsApp: +60122247105. If WhatsApp is available on this device, open https://wa.me/60122247105."
+    };
+  }
+
   const localMatch = knowledgeBase.search(message);
   if (localMatch) {
     return {

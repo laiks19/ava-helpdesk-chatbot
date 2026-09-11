@@ -9,6 +9,9 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 - Remembers a tab conversation across page refreshes.
 - Searches uploaded local PDF files before using OpenAI.
 - Supports uploading multiple PDFs, up to 50 total files.
+- Lets Admin remove uploaded PDFs from the library.
+- Politely rejects questions outside IT support.
+- Suggests IT Helpdesk contact after the same unresolved question is repeated more than 5 times.
 - Saves ended conversations into `helpdesklog/`.
 - Clears session memory after a conversation is ended.
 - Includes a separate Admin PDF Library page.
@@ -22,7 +25,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 - Multer for uploads
 - pdf-parse for PDF text extraction
 - OpenAI Node SDK for fallback answers
-- Default OpenAI fallback model: `gpt-4o-mini`
+- Default OpenAI fallback model: `gpt-4o`
 - Optional Supabase REST/Storage persistence for production hosting
 - Node.js built-in test runner
 
@@ -38,7 +41,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 
    ```env
    OPENAI_API_KEY=your_openai_api_key_here
-   OPENAI_MODEL=gpt-4o-mini
+   OPENAI_MODEL=gpt-4o
    AVA_ADMIN_USERNAME=Admin
    AVA_ADMIN_PASSWORD=admin123
    SUPABASE_URL=your_supabase_project_url
@@ -113,7 +116,7 @@ SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o
 AVA_ADMIN_USERNAME=Admin
 AVA_ADMIN_PASSWORD=admin123
 ```
@@ -128,13 +131,13 @@ Run:
 npm test
 ```
 
-The tests cover tab session isolation, local-PDF-first answer routing, and conversation logging with memory cleanup.
+The tests cover tab session isolation, local-PDF-first answer routing, Admin login, PDF deletion, support-topic routing, repeated-question escalation, and conversation logging with memory cleanup.
 
 ## What's Coming Next
 
 - Stronger Admin authentication.
 - Better semantic PDF search with embeddings.
-- PDF delete and re-index controls.
+- PDF re-index controls.
 - Conversation export filters.
 - Production deployment setup.
 - Ticket system integrations.

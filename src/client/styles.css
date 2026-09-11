@@ -69,92 +69,54 @@ a {
   font-style: normal;
 }
 
-.robot {
+.ava-icon {
   width: 64px;
-  height: 54px;
-  position: relative;
-  display: grid;
-  place-items: end center;
-}
-
-.robot-small {
-  width: 46px;
-  height: 40px;
+  height: 64px;
   flex: 0 0 auto;
+  overflow: visible;
 }
 
-.antenna {
-  position: absolute;
-  top: 0;
-  width: 7px;
-  height: 17px;
-  border-radius: 99px;
-  background: #2b9bb8;
+.ava-icon-small {
+  width: 46px;
+  height: 46px;
 }
 
-.antenna::before {
-  content: "";
-  position: absolute;
-  top: -4px;
-  left: -3px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #76d2e2;
-  border: 2px solid #075a70;
+.ava-icon-shadow {
+  fill: rgba(7, 90, 112, 0.16);
 }
 
-.face {
-  width: 58px;
-  height: 40px;
-  border: 2px solid #82aec0;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #eff9fb, #cfeef4);
-  box-shadow: inset 0 -8px 18px rgba(0, 94, 126, 0.16);
-  position: relative;
+.ava-icon-face {
+  fill: #e9f8fb;
+  stroke: #075a70;
+  stroke-width: 2.4;
 }
 
-.robot-small .face {
-  width: 42px;
-  height: 29px;
-  border-radius: 13px;
+.ava-icon-antenna,
+.ava-icon-mouth,
+.ava-icon-ear {
+  fill: none;
+  stroke: #075a70;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.7;
 }
 
-.face::before,
-.face::after {
-  content: "";
-  position: absolute;
-  top: 11px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #101b24;
-  box-shadow: 0 0 0 3px rgba(42, 206, 225, 0.45);
+.ava-icon-node {
+  fill: #82dbea;
+  stroke: #075a70;
+  stroke-width: 2.2;
 }
 
-.robot-small .face::before,
-.robot-small .face::after {
-  top: 8px;
-  width: 7px;
-  height: 7px;
-}
-
-.face::before {
-  left: 13px;
-}
-
-.face::after {
-  right: 13px;
-}
-
-.face i {
-  display: none;
+.ava-icon-eye {
+  fill: #111d27;
+  filter: drop-shadow(0 0 3px rgba(20, 190, 210, 0.55));
 }
 
 .admin-link,
 .primary-button,
 .icon-button,
-.end-button {
+.end-button,
+.danger-button {
   border: 1px solid #8db5c7;
   border-radius: 8px;
   background: #fff;
@@ -306,6 +268,13 @@ a {
   min-width: 214px;
 }
 
+.danger-button {
+  min-height: 38px;
+  border-color: #ef8a8a;
+  color: #bf1212;
+  padding: 0 12px;
+}
+
 .admin-shell {
   min-height: 100vh;
 }
@@ -405,7 +374,7 @@ a {
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 120px 100px 120px;
+  grid-template-columns: minmax(220px, 1fr) 120px 100px 120px 132px;
   gap: 12px;
   padding: 14px 16px;
   align-items: center;

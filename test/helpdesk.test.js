@@ -11,6 +11,8 @@ import {
   getOpenAiModel,
   getAdminPassword,
   createUploadedPdfDocument,
+  isItSupportQuestion,
+  repeatedUnsolvedCount,
   validateAdminCredentials,
   shouldWriteLocalConversationLog,
   resolveHelpdeskAnswer
@@ -121,8 +123,45 @@ test("OpenAI connection failures return a useful helpdesk response instead of th
 });
 
 test("OpenAI fallback defaults to the cheap helpdesk model", () => {
-  assert.equal(getOpenAiModel({}), "gpt-4o-mini");
+  assert.equal(getOpenAiModel({}), "gpt-4o");
   assert.equal(getOpenAiModel({ OPENAI_MODEL: "gpt-4.1-mini" }), "gpt-4.1-mini");
+});
+
+test("Ava politely rejects non-IT support questions", async () => {
+  assert.equal(isItSupportQuestion("Why is my printer offline?"), true);
+  assert.equal(isItSupportQuestion("What should I cook for dinner?"), false);
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "What should I cook for dinner?",
+    history: [],
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async () => "Recipe"
+  });
+
+  assert.equal(answer.source, "out_of_scope");
+  assert.match(answer.answer, /IT support/i);
+});
+
+test("Ava escalates repeated unresolved questions after more than five attempts", async () => {
+  const history = Array.from({ length: 6 }, () => ({
+    role: "user",
+    content: "VPN will not connect"
+  }));
+
+  assert.equal(repeatedUnsolvedCount("VPN will not connect", history), 6);
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "VPN will not connect",
+    history,
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async () => {
+      throw new Error("Connection error.");
+    }
+  });
+
+  assert.equal(answer.source, "helpdesk_escalation");
+  assert.match(answer.answer, /\+60122247105/);
+  assert.match(answer.answer, /wa\.me\/60122247105/);
 });
 
 test("published Sites frontend points API calls to the local Ava server", () => {
@@ -157,6 +196,21 @@ test("uploaded PDF document metadata gets a stored name when upload is memory ba
   assert.equal(document.originalName, "Printer Setup Guide.pdf");
 });
 
+test("knowledge base can remove an uploaded PDF by id", () => {
+  const knowledge = createKnowledgeBase([
+    {
+      id: "printer-guide.pdf",
+      originalName: "Printer Guide.pdf",
+      storedName: "printer-guide.pdf",
+      text: "Printer setup steps"
+    }
+  ]);
+
+  assert.equal(knowledge.removeDocument("printer-guide.pdf")?.originalName, "Printer Guide.pdf");
+  assert.equal(knowledge.count(), 0);
+  assert.equal(knowledge.removeDocument("missing.pdf"), null);
+});
+
 test("admin login requires default Admin username and password", () => {
   assert.equal(
     validateAdminCredentials({
@@ -188,6 +242,14 @@ test("Admin page does not display the default password", async () => {
   const adminPage = source.match(/function AdminPage\(\) \{[\s\S]*?\nfunction formatBytes/)?.[0] || "";
 
   assert.doesNotMatch(adminPage, /placeholder="admin123"/);
+});
+
+test("Admin page has controls for deleting uploaded PDFs and an Ava icon", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /deletePdf/);
+  assert.match(source, /Delete PDF/);
+  assert.match(source, /aria-label="Ava assistant icon"/);
 });
 
 test("Vercel deployments do not write local conversation log files", () => {
