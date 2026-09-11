@@ -124,6 +124,7 @@ test("OpenAI connection failures return a useful helpdesk response instead of th
 
 test("OpenAI fallback defaults to the cheap helpdesk model", () => {
   assert.equal(getOpenAiModel({}), "gpt-4o");
+  assert.equal(getOpenAiModel({ OPENAI_MODEL: "gpt-4o-mini" }), "gpt-4o");
   assert.equal(getOpenAiModel({ OPENAI_MODEL: "gpt-4.1-mini" }), "gpt-4.1-mini");
 });
 

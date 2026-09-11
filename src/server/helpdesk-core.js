@@ -11,7 +11,8 @@ export function currentDateString(now = new Date()) {
 }
 
 export function getOpenAiModel(env = process.env) {
-  return env.OPENAI_MODEL || "gpt-4o";
+  const model = String(env.OPENAI_MODEL || "").trim();
+  return model && model !== "gpt-4o-mini" ? model : "gpt-4o";
 }
 
 export function getAdminPassword(env = process.env) {
