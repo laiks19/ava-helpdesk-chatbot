@@ -244,10 +244,41 @@ const itSupportPatterns = [
   /\bslow\b/i
 ];
 
+const unresolvedFollowUpPatterns = [
+  /\bstill\b/i,
+  /\bsame\b/i,
+  /\bnot\s+(fixed|solved|resolved|working)\b/i,
+  /\bunable\s+to\s+(fix|solve|resolve)\b/i,
+  /\bcan('?|no)t\s+(fix|solve|resolve|print|connect|login|log\s*in)\b/i,
+  /\btry\s+(all|already|everything)\b/i,
+  /\btried\s+(all|already|everything)\b/i,
+  /\bno\s+change\b/i,
+  /\bissue\s+persists\b/i,
+  /\bproblem\s+continues\b/i
+];
+
 export function isItSupportQuestion(message) {
   const text = String(message || "").trim();
   if (!text) return false;
   return itSupportPatterns.some((pattern) => pattern.test(text));
+}
+
+function isUnresolvedFollowUp(message) {
+  const text = String(message || "").trim();
+  if (!text) return false;
+  return unresolvedFollowUpPatterns.some((pattern) => pattern.test(text));
+}
+
+function previousUserItTopic(history = []) {
+  return [...history]
+    .reverse()
+    .find((item) => item.role === "user" && isItSupportQuestion(item.content))?.content || "";
+}
+
+function contextualizeMessage(message, history = []) {
+  if (isItSupportQuestion(message) || !isUnresolvedFollowUp(message)) return message;
+  const previousTopic = previousUserItTopic(history);
+  return previousTopic ? `${previousTopic}\nFollow-up: ${message}` : message;
 }
 
 function normalizeQuestion(message) {
@@ -270,7 +301,9 @@ export async function resolveHelpdeskAnswer({
   knowledgeBase,
   openAiResponder
 }) {
-  if (!isItSupportQuestion(message)) {
+  const contextualMessage = contextualizeMessage(message, history);
+
+  if (!isItSupportQuestion(contextualMessage)) {
     return {
       source: "out_of_scope",
       answer:
@@ -286,7 +319,7 @@ export async function resolveHelpdeskAnswer({
     };
   }
 
-  const localMatch = knowledgeBase.search(message);
+  const localMatch = knowledgeBase.search(contextualMessage);
   if (localMatch) {
     return {
       source: "local_pdf",
@@ -299,7 +332,7 @@ export async function resolveHelpdeskAnswer({
 
   if (openAiResponder) {
     try {
-      const answer = await openAiResponder({ message, history });
+      const answer = await openAiResponder({ message: contextualMessage, history });
       return { source: "openai", answer };
     } catch {
       return {

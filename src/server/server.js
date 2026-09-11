@@ -334,7 +334,7 @@ async function openAiResponder({ message, history }) {
       {
         role: "system",
         content:
-          "You are Ava, an IT helpdesk chatbot. Be concise, practical, and safe. The local PDF knowledge base was already searched and did not contain an answer."
+          "You are Ava, an IT helpdesk chatbot. Be concise, practical, and safe. The local PDF knowledge base was already searched and did not contain an answer. Treat follow-up messages like 'still same', 'try all', or 'not solved' as the same support case from the recent conversation."
       },
       ...history.slice(-8).map((item) => ({
         role: item.role === "assistant" ? "assistant" : "user",

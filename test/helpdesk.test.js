@@ -143,6 +143,32 @@ test("Ava politely rejects non-IT support questions", async () => {
   assert.match(answer.answer, /IT support/i);
 });
 
+test("Ava treats unresolved follow-up text as part of the previous IT issue", async () => {
+  const history = [
+    { role: "user", content: "Printer cannot print after restart" },
+    {
+      role: "assistant",
+      content: "Check the printer queue, cable, WiFi, and print spooler."
+    },
+    { role: "user", content: "try all, still same" }
+  ];
+  let responderMessage = "";
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "try all, still same",
+    history,
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async ({ message }) => {
+      responderMessage = message;
+      return "Since the printer issue is still unresolved, please collect the printer model and error light status.";
+    }
+  });
+
+  assert.equal(answer.source, "openai");
+  assert.match(responderMessage, /Printer cannot print/i);
+  assert.match(responderMessage, /try all, still same/i);
+});
+
 test("Ava escalates repeated unresolved questions after more than five attempts", async () => {
   const history = Array.from({ length: 6 }, () => ({
     role: "user",
@@ -251,6 +277,13 @@ test("Admin page has controls for deleting uploaded PDFs and an Ava icon", async
   assert.match(source, /deletePdf/);
   assert.match(source, /Delete PDF/);
   assert.match(source, /aria-label="Ava assistant icon"/);
+});
+
+test("OpenAI system prompt tells Ava to handle follow-up messages as the same support case", async () => {
+  const source = await readFile(new URL("../src/server/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /follow-up/i);
+  assert.match(source, /same support case/i);
 });
 
 test("Vercel deployments do not write local conversation log files", () => {
