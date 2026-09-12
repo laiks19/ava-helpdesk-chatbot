@@ -182,7 +182,7 @@ function ChatPage() {
           {messages.map((item, index) => (
             <Message key={`${item.timestamp}-${index}`} message={item} />
           ))}
-          {busy && <div className="typing">Ava is checking the PDF library...</div>}
+          {busy && <div className="typing">Ava is thinking...</div>}
         </div>
         {notice && <p className="notice">{notice}</p>}
         <form className="composer" onSubmit={sendMessage}>
@@ -220,12 +220,13 @@ function Header() {
 function Message({ message }) {
   const isUser = message.role === "user";
   const sourceLabel = {
-    local_pdf: "Local PDF",
     openai: "OpenAI",
     openai_error: "AI unavailable",
     out_of_scope: "IT support only",
+    needs_clarification: "More detail needed",
     helpdesk_escalation: "Contact IT"
   }[message.source] || "Setup needed";
+  const showSource = message.source && !["system", "local_pdf"].includes(message.source);
 
   return (
     <article className={isUser ? "message user" : "message ava"}>
@@ -233,7 +234,7 @@ function Message({ message }) {
       <div>
         <p>{message.content}</p>
         <time>{new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-        {message.source && message.source !== "system" && (
+        {showSource && (
           <span className="source-tag">{sourceLabel}</span>
         )}
       </div>

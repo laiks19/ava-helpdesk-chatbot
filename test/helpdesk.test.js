@@ -349,6 +349,16 @@ test("chat page keeps only the conversation interface", async () => {
   assert.match(chatPage, /chat-panel/);
 });
 
+test("chat page does not show local PDF searching text or source labels", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+  const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";
+  const messageComponent = source.match(/function Message\(\{ message \}\) \{[\s\S]*?\nfunction AdminPage/)?.[0] || "";
+
+  assert.doesNotMatch(chatPage, /checking the PDF library/i);
+  assert.doesNotMatch(chatPage, /searching.*PDF/i);
+  assert.doesNotMatch(messageComponent, /local_pdf:\s*"Local PDF"/);
+});
+
 test("uploaded PDF document metadata gets a stored name when upload is memory backed", () => {
   const document = createUploadedPdfDocument({
     file: {
