@@ -257,6 +257,24 @@ const unresolvedFollowUpPatterns = [
   /\bproblem\s+continues\b/i
 ];
 
+const contextDetailPatterns = [
+  /\b(edge|microsoft\s+edge|chrome|firefox|safari|brave|opera)\b/i,
+  /\bwindows\s*(10|11)?\b/i,
+  /\bmac\s*os\b/i,
+  /\b(version|build)\s*[:#]?\s*[a-z0-9.-]+\b/i,
+  /\busing\s+[a-z0-9 .-]+\b/i,
+  /\bon\s+(my\s+)?(laptop|desktop|pc|computer|phone|tablet)\b/i,
+  /\berror\s*(code)?\s*[:#]?\s*[a-z0-9.-]+\b/i
+];
+
+const assistantDetailQuestionPatterns = [
+  /\bwhich\s+(browser|device|printer|computer|version|operating system|os)\b/i,
+  /\bwhat\s+(browser|device|printer|model|version|operating system|os)\b/i,
+  /\bare\s+you\s+using\b/i,
+  /\bwhat .* using\b/i,
+  /\bcan\s+you\s+(tell|share|confirm|provide)\b/i
+];
+
 export function isItSupportQuestion(message) {
   const text = String(message || "").trim();
   if (!text) return false;
@@ -275,8 +293,28 @@ function previousUserItTopic(history = []) {
     .find((item) => item.role === "user" && isItSupportQuestion(item.content))?.content || "";
 }
 
+function recentAssistantAskedForDetail(history = []) {
+  return [...history]
+    .reverse()
+    .slice(0, 4)
+    .some(
+      (item) =>
+        item.role === "assistant" &&
+        assistantDetailQuestionPatterns.some((pattern) => pattern.test(item.content || ""))
+    );
+}
+
+function isContextDetailFollowUp(message, history = []) {
+  const text = String(message || "").trim();
+  if (!text || text.length > 120 || isItSupportQuestion(text)) return false;
+  if (!previousUserItTopic(history)) return false;
+  if (!contextDetailPatterns.some((pattern) => pattern.test(text))) return false;
+  return recentAssistantAskedForDetail(history) || isUnresolvedFollowUp(text);
+}
+
 function contextualizeMessage(message, history = []) {
-  if (isItSupportQuestion(message) || !isUnresolvedFollowUp(message)) return message;
+  if (isItSupportQuestion(message)) return message;
+  if (!isUnresolvedFollowUp(message) && !isContextDetailFollowUp(message, history)) return message;
   const previousTopic = previousUserItTopic(history);
   return previousTopic ? `${previousTopic}\nFollow-up: ${message}` : message;
 }
@@ -420,7 +458,7 @@ export async function resolveHelpdeskAnswer({
     return {
       source: "out_of_scope",
       answer:
-        "I can help with IT support questions about hardware, software, accounts, access, network, email, printers, and similar workplace technology issues. Please send an IT support question and I will help."
+        "I can help only with IT support questions about hardware, software, accounts, access, network, email, printers, and similar workplace technology issues. Please rephrase your question as an IT support issue, or explain a little more about the technical problem you need help with."
     };
   }
 

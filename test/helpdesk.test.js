@@ -172,6 +172,58 @@ test("Ava treats unresolved follow-up text as part of the previous IT issue", as
   assert.match(responderMessage, /try all, still same/i);
 });
 
+test("Ava treats browser details as context for the previous IT question", async () => {
+  const history = [
+    { role: "user", content: "Company portal cannot load in my browser" },
+    {
+      role: "assistant",
+      content: "Which browser are you using?"
+    },
+    { role: "user", content: "I am using Edge" }
+  ];
+  let responderMessage = "";
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "I am using Edge",
+    history,
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async ({ message }) => {
+      responderMessage = message;
+      return "For Microsoft Edge, clear site data for the portal and try an InPrivate window.";
+    }
+  });
+
+  assert.equal(answer.source, "openai");
+  assert.match(responderMessage, /Company portal cannot load/i);
+  assert.match(responderMessage, /I am using Edge/i);
+});
+
+test("Ava asks for more detail when a follow-up is unrelated to the previous IT issue", async () => {
+  const history = [
+    { role: "user", content: "Printer cannot print" },
+    {
+      role: "assistant",
+      content: "Please check the printer queue and restart the print spooler."
+    },
+    { role: "user", content: "I cooked noodles" }
+  ];
+  let fallbackCalls = 0;
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "I cooked noodles",
+    history,
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async () => {
+      fallbackCalls += 1;
+      return "Food answer";
+    }
+  });
+
+  assert.equal(answer.source, "out_of_scope");
+  assert.equal(fallbackCalls, 0);
+  assert.match(answer.answer, /rephrase|explain/i);
+});
+
 test("Ava verifies a likely name with OpenAI before accepting it", async () => {
   let classifierInput = "";
 
