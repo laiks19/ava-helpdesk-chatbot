@@ -356,20 +356,34 @@ function hasUsableOpenAiKey() {
   return key.startsWith("sk-") && key !== "your_openai_api_key_here";
 }
 
-async function openAiResponder({ message, history }) {
+async function openAiResponder({ message, history, localContext, triage }) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const systemPrompt = localContext
+    ? "You are Ava, an IT helpdesk chatbot. The local PDF knowledge base was searched first and a relevant excerpt is provided. Answer politely and clearly using only the provided local PDF excerpt and the recent conversation. Do not mention that you are searching, do not say 'I found this in', and do not invent steps outside the excerpt. If the excerpt is not enough, ask one focused follow-up question."
+    : "You are Ava, an IT helpdesk chatbot. Be concise, practical, and safe. The local PDF knowledge base was already searched and did not contain an answer. Treat follow-up messages like 'still same', 'try all', or 'not solved' as the same support case from the recent conversation.";
+  const localContextMessage = localContext
+    ? [
+        {
+          role: "user",
+          content:
+            `Local PDF source: ${localContext.documentName}\n` +
+            `Matched terms: ${(localContext.matchedTerms || []).join(", ") || "none"}\n` +
+            `Excerpt:\n${localContext.excerpt}`
+        }
+      ]
+    : [];
   const response = await client.responses.create({
     model: getOpenAiModel(),
     input: [
       {
         role: "system",
-        content:
-          "You are Ava, an IT helpdesk chatbot. Be concise, practical, and safe. The local PDF knowledge base was already searched and did not contain an answer. Treat follow-up messages like 'still same', 'try all', or 'not solved' as the same support case from the recent conversation."
+        content: `${systemPrompt} Current turn type: ${triage?.type || "unknown"}.`
       },
       ...history.slice(-8).map((item) => ({
         role: item.role === "assistant" ? "assistant" : "user",
         content: item.content
       })),
+      ...localContextMessage,
       { role: "user", content: message }
     ]
   });

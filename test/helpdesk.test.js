@@ -12,6 +12,7 @@ import {
   getAdminPassword,
   createUploadedPdfDocument,
   addressUser,
+  classifyHelpdeskTurn,
   getCapturedName,
   isItSupportQuestion,
   repeatedUnsolvedCount,
@@ -42,20 +43,21 @@ test("answer resolution uses local PDF knowledge before OpenAI fallback", async 
     text: "VPN connection help: reset your VPN profile, restart GlobalProtect, and try again."
   });
 
-  let fallbackCalls = 0;
+  let responderRequest;
   const answer = await resolveHelpdeskAnswer({
     message: "How do I fix VPN connection?",
     history: [],
     knowledgeBase: knowledge,
-    openAiResponder: async () => {
-      fallbackCalls += 1;
-      return "Fallback answer";
+    openAiResponder: async (request) => {
+      responderRequest = request;
+      return "Please reset your VPN profile, restart GlobalProtect, and try connecting again.";
     }
   });
 
   assert.equal(answer.source, "local_pdf");
-  assert.match(answer.answer, /VPN Guide\.pdf/);
-  assert.equal(fallbackCalls, 0);
+  assert.match(answer.answer, /reset your VPN profile/i);
+  assert.doesNotMatch(answer.answer, /I found this/i);
+  assert.equal(responderRequest.localContext.documentName, "VPN Guide.pdf");
 });
 
 test("weak unrelated PDF matches do not block OpenAI fallback", async () => {
@@ -219,9 +221,29 @@ test("Ava asks for more detail when a follow-up is unrelated to the previous IT 
     }
   });
 
-  assert.equal(answer.source, "out_of_scope");
+  assert.equal(answer.source, "needs_clarification");
   assert.equal(fallbackCalls, 0);
   assert.match(answer.answer, /rephrase|explain/i);
+});
+
+test("Ava classifies helpdesk turns before choosing the answer path", () => {
+  assert.equal(classifyHelpdeskTurn("Printer cannot print", []).type, "new_issue");
+  assert.equal(
+    classifyHelpdeskTurn("try all, still same", [{ role: "user", content: "Printer cannot print" }]).type,
+    "unresolved_follow_up"
+  );
+  assert.equal(
+    classifyHelpdeskTurn("I am using Edge", [
+      { role: "user", content: "Company portal cannot load in my browser" },
+      { role: "assistant", content: "Which browser are you using?" }
+    ]).type,
+    "detail_follow_up"
+  );
+  assert.equal(
+    classifyHelpdeskTurn("I cooked noodles", [{ role: "user", content: "Printer cannot print" }]).type,
+    "needs_clarification"
+  );
+  assert.equal(classifyHelpdeskTurn("What should I cook for dinner?", []).type, "out_of_scope");
 });
 
 test("Ava verifies a likely name with OpenAI before accepting it", async () => {

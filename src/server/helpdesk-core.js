@@ -319,6 +319,26 @@ function contextualizeMessage(message, history = []) {
   return previousTopic ? `${previousTopic}\nFollow-up: ${message}` : message;
 }
 
+export function classifyHelpdeskTurn(message, history = []) {
+  const previousTopic = previousUserItTopic(history);
+  const contextualMessage = contextualizeMessage(message, history);
+  const type = (() => {
+    if (repeatedUnsolvedCount(message, history) > 5) return "needs_escalation";
+    if (isItSupportQuestion(message)) return previousTopic ? "new_or_related_issue" : "new_issue";
+    if (isUnresolvedFollowUp(message) && previousTopic) return "unresolved_follow_up";
+    if (isContextDetailFollowUp(message, history)) return "detail_follow_up";
+    if (previousTopic) return "needs_clarification";
+    return "out_of_scope";
+  })();
+
+  return {
+    type,
+    previousTopic,
+    contextualMessage,
+    isInScope: isItSupportQuestion(contextualMessage)
+  };
+}
+
 const nameLeadInPattern = /^(my name is|i am|i'm|im|this is|call me)\s+/i;
 const affirmativePattern = /^(yes|yeah|yep|correct|right|that is right|that's right|sure|ok|okay)\b/i;
 const negativePattern = /^(no|nope|not me|wrong|incorrect)\b/i;
@@ -452,9 +472,18 @@ export async function resolveHelpdeskAnswer({
   knowledgeBase,
   openAiResponder
 }) {
-  const contextualMessage = contextualizeMessage(message, history);
+  const triage = classifyHelpdeskTurn(message, history);
+  const contextualMessage = triage.contextualMessage;
 
-  if (!isItSupportQuestion(contextualMessage)) {
+  if (triage.type === "needs_clarification") {
+    return {
+      source: "needs_clarification",
+      answer:
+        "I want to keep this focused on your IT support case. Please rephrase the question or explain how this detail relates to the technical problem, and I will continue from there."
+    };
+  }
+
+  if (!triage.isInScope) {
     return {
       source: "out_of_scope",
       answer:
@@ -462,7 +491,7 @@ export async function resolveHelpdeskAnswer({
     };
   }
 
-  if (repeatedUnsolvedCount(message, history) > 5) {
+  if (triage.type === "needs_escalation") {
     return {
       source: "helpdesk_escalation",
       answer:
@@ -472,18 +501,36 @@ export async function resolveHelpdeskAnswer({
 
   const localMatch = knowledgeBase.search(contextualMessage);
   if (localMatch) {
+    if (openAiResponder) {
+      try {
+        const answer = await openAiResponder({
+          message: contextualMessage,
+          history,
+          triage,
+          localContext: {
+            documentName: localMatch.document.originalName,
+            excerpt: localMatch.excerpt,
+            matchedTerms: localMatch.matchedTerms
+          }
+        });
+        return { source: "local_pdf", answer };
+      } catch {
+        return {
+          source: "openai_error",
+          answer: buildPdfFallbackAnswer(localMatch)
+        };
+      }
+    }
+
     return {
       source: "local_pdf",
-      answer:
-        `I found this in ${localMatch.document.originalName}:\n\n` +
-        `${localMatch.excerpt}\n\n` +
-        "If this does not solve it, add a little more detail and I will keep checking the local PDF library first."
+      answer: buildPdfFallbackAnswer(localMatch)
     };
   }
 
   if (openAiResponder) {
     try {
-      const answer = await openAiResponder({ message: contextualMessage, history });
+      const answer = await openAiResponder({ message: contextualMessage, history, triage });
       return { source: "openai", answer };
     } catch {
       return {
@@ -498,6 +545,14 @@ export async function resolveHelpdeskAnswer({
     answer:
       "I could not find that in the uploaded PDF library, and the OpenAI API key is not configured yet. Please upload a relevant PDF or set OPENAI_API_KEY in .env."
   };
+}
+
+function buildPdfFallbackAnswer(localMatch) {
+  return (
+    "Based on the uploaded helpdesk guide, please try this:\n\n" +
+    `${localMatch.excerpt}\n\n` +
+    "If this does not solve it, reply with what happened after trying these steps and I will continue troubleshooting."
+  );
 }
 
 function buildOfflineFallbackAnswer(message) {
