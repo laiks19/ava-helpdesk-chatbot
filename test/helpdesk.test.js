@@ -11,8 +11,11 @@ import {
   getOpenAiModel,
   getAdminPassword,
   createUploadedPdfDocument,
+  addressUser,
+  getCapturedName,
   isItSupportQuestion,
   repeatedUnsolvedCount,
+  resolveNameIntake,
   validateAdminCredentials,
   shouldWriteLocalConversationLog,
   resolveHelpdeskAnswer
@@ -167,6 +170,71 @@ test("Ava treats unresolved follow-up text as part of the previous IT issue", as
   assert.equal(answer.source, "openai");
   assert.match(responderMessage, /Printer cannot print/i);
   assert.match(responderMessage, /try all, still same/i);
+});
+
+test("Ava verifies a likely name with OpenAI before accepting it", async () => {
+  let classifierInput = "";
+
+  const result = await resolveNameIntake({
+    message: "John Tan",
+    history: [],
+    nameClassifier: async (message) => {
+      classifierInput = message;
+      return { decision: "name", name: "John Tan" };
+    }
+  });
+
+  assert.equal(classifierInput, "John Tan");
+  assert.equal(result.handled, true);
+  assert.equal(result.profileName, "John Tan");
+  assert.match(result.answer, /John Tan/);
+  assert.match(result.answer, /IT issue/i);
+});
+
+test("Ava asks for confirmation when OpenAI is unsure about a name", async () => {
+  const result = await resolveNameIntake({
+    message: "Jordan Lee",
+    history: [],
+    nameClassifier: async () => ({ decision: "unsure", name: "Jordan" })
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.pendingName, "Jordan");
+  assert.match(result.answer, /confirm/i);
+  assert.match(result.answer, /Jordan/);
+});
+
+test("Ava accepts a confirmed pending name and can address the user", async () => {
+  const history = [{ role: "assistant", content: "Just to confirm, is your name Jordan?", pendingName: "Jordan" }];
+
+  const result = await resolveNameIntake({
+    message: "yes",
+    history,
+    nameClassifier: async () => ({ decision: "not_name" })
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.profileName, "Jordan");
+
+  const savedName = getCapturedName([{ role: "assistant", content: result.answer, profileName: result.profileName }]);
+  assert.equal(savedName, "Jordan");
+  assert.match(addressUser("Please restart the printer spooler.", savedName), /^Jordan, /);
+});
+
+test("Ava does not mistake a first IT issue for a name", async () => {
+  let classifierCalls = 0;
+
+  const result = await resolveNameIntake({
+    message: "Printer cannot print",
+    history: [],
+    nameClassifier: async () => {
+      classifierCalls += 1;
+      return { decision: "name", name: "Printer" };
+    }
+  });
+
+  assert.equal(result.handled, false);
+  assert.equal(classifierCalls, 0);
 });
 
 test("Ava escalates repeated unresolved questions after more than five attempts", async () => {

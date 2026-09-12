@@ -281,6 +281,119 @@ function contextualizeMessage(message, history = []) {
   return previousTopic ? `${previousTopic}\nFollow-up: ${message}` : message;
 }
 
+const nameLeadInPattern = /^(my name is|i am|i'm|im|this is|call me)\s+/i;
+const affirmativePattern = /^(yes|yeah|yep|correct|right|that is right|that's right|sure|ok|okay)\b/i;
+const negativePattern = /^(no|nope|not me|wrong|incorrect)\b/i;
+
+function cleanHumanName(value) {
+  return String(value || "")
+    .trim()
+    .replace(nameLeadInPattern, "")
+    .replace(/[?.!,;:]+$/g, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 80)
+    .trim();
+}
+
+function isPlausibleNameCandidate(value) {
+  const name = cleanHumanName(value);
+  if (!name || name.length < 2 || name.length > 80) return false;
+  if (isItSupportQuestion(name)) return false;
+  if (/[0-9@/#\\_=+()[\]{}<>]/.test(name)) return false;
+  if (/[?]/.test(value)) return false;
+  const parts = name.split(/\s+/);
+  if (parts.length > 4) return false;
+  return parts.every((part) => /^[A-Za-z][A-Za-z'.-]*$/.test(part) && part.length > 1);
+}
+
+function fallbackNameClassification(message) {
+  if (!isPlausibleNameCandidate(message)) return { decision: "not_name", name: "" };
+  return { decision: "unsure", name: cleanHumanName(message) };
+}
+
+function lastPendingName(history = []) {
+  return [...history]
+    .reverse()
+    .find((item) => item.role === "assistant" && item.pendingName)?.pendingName || "";
+}
+
+export function getCapturedName(history = []) {
+  return cleanHumanName(
+    [...history]
+      .reverse()
+      .find((item) => item.profileName)?.profileName || ""
+  );
+}
+
+export function addressUser(answer, name) {
+  const cleanName = cleanHumanName(name);
+  const text = String(answer || "").trim();
+  if (!cleanName || !text) return text;
+  if (new RegExp(`^${cleanName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)) {
+    return text;
+  }
+  return `${cleanName}, ${text}`;
+}
+
+export async function resolveNameIntake({ message, history = [], nameClassifier } = {}) {
+  const text = String(message || "").trim();
+  if (!text || getCapturedName(history)) return { handled: false };
+
+  const pendingName = cleanHumanName(lastPendingName(history));
+  if (pendingName && affirmativePattern.test(text)) {
+    return {
+      handled: true,
+      source: "system",
+      profileName: pendingName,
+      answer: `Nice to meet you, ${pendingName}. How can I help with your IT issue today?`
+    };
+  }
+
+  if (pendingName && negativePattern.test(text)) {
+    return {
+      handled: true,
+      source: "system",
+      answer: "No problem. May I know your name?"
+    };
+  }
+
+  if (isItSupportQuestion(text) || !isPlausibleNameCandidate(text)) return { handled: false };
+
+  let classification = fallbackNameClassification(text);
+  if (nameClassifier) {
+    try {
+      classification = await nameClassifier(text);
+    } catch {
+      classification = fallbackNameClassification(text);
+    }
+  }
+
+  const decision = ["name", "not_name", "unsure"].includes(classification?.decision)
+    ? classification.decision
+    : "unsure";
+  const classifiedName = cleanHumanName(classification?.name || text);
+
+  if (decision === "name" && classifiedName) {
+    return {
+      handled: true,
+      source: "system",
+      profileName: classifiedName,
+      answer: `Nice to meet you, ${classifiedName}. How can I help with your IT issue today?`
+    };
+  }
+
+  if (decision === "unsure" && classifiedName) {
+    return {
+      handled: true,
+      source: "system",
+      pendingName: classifiedName,
+      answer: `Just to confirm, is your name ${classifiedName}?`
+    };
+  }
+
+  return { handled: false };
+}
+
 function normalizeQuestion(message) {
   return String(message || "")
     .toLowerCase()

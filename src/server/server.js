@@ -18,14 +18,17 @@ import {
 } from "./supabase-store.js";
 
 import {
+  addressUser,
   createConversationLogger,
   createKnowledgeBase,
   createSessionStore,
   createUploadedPdfDocument,
   currentDateString,
   getAdminPassword,
+  getCapturedName,
   getOpenAiModel,
   resolveHelpdeskAnswer,
+  resolveNameIntake,
   shouldWriteLocalConversationLog,
   validateAdminCredentials
 } from "./helpdesk-core.js";
@@ -108,15 +111,42 @@ app.post("/api/chat", async (req, res) => {
     await hydrateSession(sessionId);
     const userMessage = sessions.addMessage(sessionId, { role: "user", content: message });
     const history = sessions.getMessages(sessionId);
+    const nameResult = await resolveNameIntake({
+      message,
+      history,
+      nameClassifier: hasUsableOpenAiKey() ? classifyHumanNameWithOpenAi : null
+    });
+
+    if (nameResult.handled) {
+      const assistantMessage = sessions.addMessage(sessionId, {
+        role: "assistant",
+        content: nameResult.answer,
+        source: nameResult.source,
+        profileName: nameResult.profileName,
+        pendingName: nameResult.pendingName
+      });
+      await sessions.save();
+      await saveSession(sessionId);
+
+      res.json({
+        sessionId,
+        source: nameResult.source,
+        messages: [userMessage, assistantMessage],
+        answer: nameResult.answer
+      });
+      return;
+    }
+
     const result = await resolveHelpdeskAnswer({
       message,
       history,
       knowledgeBase,
       openAiResponder: hasUsableOpenAiKey() ? openAiResponder : null
     });
+    const personalizedAnswer = addressUser(result.answer, getCapturedName(history));
     const assistantMessage = sessions.addMessage(sessionId, {
       role: "assistant",
-      content: result.answer,
+      content: personalizedAnswer,
       source: result.source
     });
     await sessions.save();
@@ -126,7 +156,7 @@ app.post("/api/chat", async (req, res) => {
       sessionId,
       source: result.source,
       messages: [userMessage, assistantMessage],
-      answer: result.answer
+      answer: personalizedAnswer
     });
   } catch (error) {
     res.status(500).json({ error: error.message || "Unable to answer right now." });
@@ -344,4 +374,39 @@ async function openAiResponder({ message, history }) {
     ]
   });
   return response.output_text || "I could not generate a response right now.";
+}
+
+async function classifyHumanNameWithOpenAi(message) {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const response = await client.responses.create({
+    model: getOpenAiModel(),
+    input: [
+      {
+        role: "system",
+        content:
+          "Classify whether the user's short chat message is a human name or a helpdesk/support conversation. Return only JSON with decision as name, not_name, or unsure, and name as the cleaned human name when relevant. If the text looks like an IT issue, troubleshooting follow-up, command, password, API key, or normal conversation instead of a person's name, use not_name."
+      },
+      { role: "user", content: message }
+    ]
+  });
+  const parsed = parseJsonObject(response.output_text || "");
+  return {
+    decision: parsed?.decision,
+    name: parsed?.name
+  };
+}
+
+function parseJsonObject(value) {
+  const text = String(value || "").trim();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
 }

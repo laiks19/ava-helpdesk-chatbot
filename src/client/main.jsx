@@ -112,7 +112,7 @@ function ChatPage() {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: "Hi, I’m Ava, your IT Helpdesk assistant. How can I help you today?",
+      content: "Hi, I’m Ava, your IT Helpdesk assistant. May I know your name?",
       timestamp: new Date().toISOString(),
       source: "system"
     }
