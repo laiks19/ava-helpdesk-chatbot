@@ -730,7 +730,6 @@ function ChatPage({ panelMode = "full", auth, onTicketCreated }) {
           <RobotIcon small />
           <div>
             <h1>Ask Ava</h1>
-            <p>Ava checks local uploaded PDF files first, then uses the OpenAI fallback only for IT support questions.</p>
           </div>
         </div>
       ) : null}

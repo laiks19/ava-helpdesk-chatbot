@@ -420,6 +420,7 @@ test("chat page does not show local PDF searching text or source labels", async 
   const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";
   const messageComponent = source.match(/function Message\(\{ message \}\) \{[\s\S]*?\nfunction RobotIcon/)?.[0] || "";
 
+  assert.doesNotMatch(source, /Ava checks local uploaded PDF files first/);
   assert.doesNotMatch(chatPage, /checking the PDF library/i);
   assert.doesNotMatch(chatPage, /searching.*PDF/i);
   assert.doesNotMatch(messageComponent, /local_pdf:\s*"Local PDF"/);
