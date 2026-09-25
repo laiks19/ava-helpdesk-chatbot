@@ -184,6 +184,22 @@ test("ordered Supabase migrations include Ava persistence and private PDF storag
   assert.match(sql, /public\s*=\s*false/i);
 });
 
+test("AI news migration protects cached items and refresh history", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) => name.endsWith("_daily_ai_news.sql"));
+  assert.ok(migrationName, "daily AI news migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  for (const table of ["ai_news_items", "ai_news_refreshes"]) {
+    assert.match(sql, new RegExp(`create table public\\.${table}`, "i"));
+    assert.match(sql, new RegExp(`alter table public\\.${table} enable row level security`, "i"));
+    assert.match(sql, new RegExp(`revoke all on table public\\.${table} from anon, authenticated`, "i"));
+  }
+  assert.match(sql, /url text not null unique/i);
+  assert.match(sql, /status in \('success', 'partial', 'failed'\)/i);
+  assert.match(sql, /grant all on table public\.ai_news_items to service_role/i);
+  assert.match(sql, /create index/i);
+});
+
 test("browser Supabase client uses only publishable environment values", async () => {
   const clientPath = path.join(projectRoot, "src", "client", "supabase-client.js");
   assert.equal(existsSync(clientPath), true, "browser Supabase client is missing");
