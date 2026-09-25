@@ -392,6 +392,29 @@ test("Ava branding uses the approved accessible helpdesk logo asset", async () =
   assert.ok(logo.length > 10_000);
 });
 
+test("guest ticket submission reviews details and confirms success inside a popup", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /requiresConfirmation=\{!isApprovedUser\}/);
+  assert.match(source, /Review Ticket Details/);
+  assert.match(source, /Confirm Submission/);
+  assert.match(source, />Back</);
+  assert.match(source, /Ticket Created/);
+  assert.match(source, /role="dialog"/);
+});
+
+test("approved users see ticket history beside the form and new tickets are inserted immediately", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+
+  assert.match(source, /function SubmissionHistory/);
+  assert.match(source, /api\.myTickets\(auth\.token\)/);
+  assert.match(source, /setTicketHistory\(\(current\) => \[created, \.\.\.current/);
+  assert.match(source, /function handleAvaTicketCreated/);
+  assert.match(source, /onTicketCreated=\{handleAvaTicketCreated\}/);
+  assert.match(source, /submission-workspace\$\{isApprovedUser \? " signed-in"/);
+  assert.match(source, /Your Ticket History/);
+});
+
 test("chat page does not show local PDF searching text or source labels", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
   const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";

@@ -186,14 +186,46 @@ function App() {
   const auth = useAuth();
   const [route, setRoute] = useState(hashToRoute());
   const [ticketDraft, setTicketDraft] = useState(defaultTicket);
+  const [ticketHistory, setTicketHistory] = useState([]);
+  const [ticketHistoryLoading, setTicketHistoryLoading] = useState(false);
+  const [ticketHistoryNotice, setTicketHistoryNotice] = useState("");
   const [notice, setNotice] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
+  const isApprovedUser = Boolean(
+    auth.token &&
+    auth.profile?.approvalStatus === "approved" &&
+    auth.profile?.isActive === true
+  );
 
   useEffect(() => {
     const onHash = () => setRoute(hashToRoute());
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
+
+  useEffect(() => {
+    if (!isApprovedUser) {
+      setTicketHistory([]);
+      setTicketHistoryNotice("");
+      return undefined;
+    }
+    let active = true;
+    setTicketHistoryLoading(true);
+    setTicketHistoryNotice("");
+    api.myTickets(auth.token)
+      .then((data) => {
+        if (active) setTicketHistory(data.tickets || []);
+      })
+      .catch((error) => {
+        if (active) setTicketHistoryNotice(error.message);
+      })
+      .finally(() => {
+        if (active) setTicketHistoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [auth.token, isApprovedUser]);
 
   function openTicketDraft(draft = {}) {
     setTicketDraft({ ...defaultTicket, ...draft });
@@ -202,9 +234,18 @@ function App() {
 
   async function createTicket(ticket) {
     const result = await api.createTicket(ticket, auth.token);
-    setNotice(`${result.ticket.id} submitted. A Helpdesk email draft is ready for review.`);
     openTicketEmail(result.ticket);
     return result.ticket;
+  }
+
+  function addTicketToHistory(created) {
+    if (!isApprovedUser) return;
+    setTicketHistory((current) => [created, ...current.filter((ticket) => ticket.id !== created.id)]);
+  }
+
+  function handleAvaTicketCreated(data) {
+    if (data.ticket) addTicketToHistory(data.ticket);
+    setNotice(`${data.ticket?.id || "Ticket"} created by Ava.`);
   }
 
   return (
@@ -217,12 +258,25 @@ function App() {
         <MyTickets auth={auth} onOpenAuth={() => setAuthOpen(true)} />
       ) : (
         <>
-          <main className="workspace public-workspace">
+          <main className={`workspace public-workspace submission-workspace${isApprovedUser ? " signed-in" : ""}`}>
             <section className="submission-column" id="submit">
-              <TicketSubmission initialTicket={ticketDraft} onSubmit={createTicket} onClearDraft={() => setTicketDraft(defaultTicket)} />
+              <TicketSubmission
+                initialTicket={ticketDraft}
+                onSubmit={createTicket}
+                onCreated={addTicketToHistory}
+                onClearDraft={() => setTicketDraft(defaultTicket)}
+                requiresConfirmation={!isApprovedUser}
+              />
             </section>
+            {isApprovedUser ? (
+              <SubmissionHistory
+                tickets={ticketHistory}
+                loading={ticketHistoryLoading}
+                notice={ticketHistoryNotice}
+              />
+            ) : null}
             <section className="assistant-column" id="ava">
-              <ChatPage panelMode="full" auth={auth} onTicketCreated={(data) => setNotice(`${data.ticket?.id || "Ticket"} created by Ava.`)} />
+              <ChatPage panelMode="full" auth={auth} onTicketCreated={handleAvaTicketCreated} />
             </section>
           </main>
           <AiNews api={api} />
@@ -275,10 +329,11 @@ function Header({ activeRoute, auth, onOpenAuth }) {
   );
 }
 
-function TicketSubmission({ initialTicket, onSubmit, onClearDraft }) {
+function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, requiresConfirmation = false }) {
   const [ticket, setTicket] = useState(initialTicket);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [dialog, setDialog] = useState(null);
 
   useEffect(() => {
     setTicket(initialTicket);
@@ -288,20 +343,38 @@ function TicketSubmission({ initialTicket, onSubmit, onClearDraft }) {
     setTicket((current) => ({ ...current, [field]: value }));
   }
 
-  async function submit(event) {
-    event.preventDefault();
+  async function createTicket() {
     setBusy(true);
     setNotice("");
     try {
       const created = await onSubmit(ticket);
       setTicket(defaultTicket);
       onClearDraft();
-      setNotice(`${created.id} has been created and sent to MIS Helpdesk.`);
+      onCreated?.(created);
+      if (requiresConfirmation) {
+        setDialog({ stage: "success", ticket: created });
+      } else {
+        setNotice(`${created.id} has been created and sent to MIS Helpdesk.`);
+      }
     } catch (error) {
-      setNotice(error.message);
+      if (requiresConfirmation) {
+        setDialog({ stage: "review", error: error.message });
+      } else {
+        setNotice(error.message);
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    setNotice("");
+    if (requiresConfirmation) {
+      setDialog({ stage: "review" });
+      return;
+    }
+    createTicket();
   }
 
   function clearForm() {
@@ -373,7 +446,109 @@ function TicketSubmission({ initialTicket, onSubmit, onClearDraft }) {
           {busy ? "Submitting..." : "Submit Ticket"}
         </button>
       </div>
+      {dialog ? (
+        <TicketConfirmationDialog
+          stage={dialog.stage}
+          ticket={dialog.ticket || ticket}
+          error={dialog.error}
+          busy={busy}
+          onBack={() => setDialog(null)}
+          onConfirm={createTicket}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
     </form>
+  );
+}
+
+function TicketConfirmationDialog({ stage, ticket, error, busy, onBack, onConfirm, onClose }) {
+  if (stage === "success") {
+    return (
+      <div className="dialog-backdrop" role="presentation">
+        <section className="ticket-confirmation-dialog ticket-success-dialog" role="dialog" aria-modal="true" aria-labelledby="ticket-success-title">
+          <span className="success-mark"><Icon name="check" /></span>
+          <h2 id="ticket-success-title">Ticket Created</h2>
+          <p>Your ticket number is <strong>{ticket.id}</strong>.</p>
+          <button className="primary-button" type="button" onClick={onClose}>OK</button>
+        </section>
+      </div>
+    );
+  }
+
+  const summary = [
+    ["Requester", ticket.requesterName],
+    ["Email", ticket.email],
+    ["Department", ticket.department || "-"],
+    ["Category", ticket.category],
+    ["Priority", ticket.priority],
+    ["Asset / Device", ticket.asset || "-"],
+    ["Subject", ticket.subject],
+    ["Location", ticket.location || "-"],
+    ["Description", ticket.description]
+  ];
+
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section className="ticket-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="ticket-review-title">
+        <div className="dialog-title-row">
+          <div>
+            <h2 id="ticket-review-title">Review Ticket Details</h2>
+            <p>Confirm that the information below is correct before sending it to Helpdesk.</p>
+          </div>
+        </div>
+        <dl className="ticket-review-list">
+          {summary.map(([label, value]) => (
+            <div className={label === "Description" ? "review-row review-description" : "review-row"} key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {error ? <p className="form-error">{error}</p> : null}
+        <div className="dialog-actions">
+          <button className="secondary-button" type="button" onClick={onBack} disabled={busy}>Back</button>
+          <button className="primary-button" type="button" onClick={onConfirm} disabled={busy}>
+            <Icon name="send" />
+            {busy ? "Submitting..." : "Confirm Submission"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SubmissionHistory({ tickets, loading, notice }) {
+  return (
+    <aside className="submission-history panel" aria-labelledby="submission-history-title">
+      <div className="history-heading">
+        <span className="history-icon"><Icon name="clock" /></span>
+        <div>
+          <h2 id="submission-history-title">Your Ticket History</h2>
+          <p>{tickets.length} submitted {tickets.length === 1 ? "ticket" : "tickets"}</p>
+        </div>
+      </div>
+      {loading ? <p className="history-state">Loading your tickets...</p> : null}
+      {notice ? <p className="form-error history-state">{notice}</p> : null}
+      {!loading && !notice && !tickets.length ? (
+        <p className="history-state">Your submitted tickets will appear here.</p>
+      ) : null}
+      <div className="history-list">
+        {tickets.map((ticket) => (
+          <article className="history-ticket" key={ticket.id}>
+            <div className="history-ticket-topline">
+              <strong>{ticket.id}</strong>
+              <span className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</span>
+            </div>
+            <h3>{ticket.subject}</h3>
+            <div className="history-ticket-meta">
+              <span><i className={`dot ${String(ticket.priority).toLowerCase()}`} />{ticket.priority}</span>
+              <span>{ticket.category}</span>
+              <time>{formatDate(ticket.createdAt)}</time>
+            </div>
+          </article>
+        ))}
+      </div>
+    </aside>
   );
 }
 
