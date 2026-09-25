@@ -13,6 +13,27 @@ import {
   validateTicketInput
 } from "./helpdesk-core.js";
 
+export function toPublicDashboard(dashboard = {}) {
+  return {
+    tickets: (dashboard.tickets || []).map((ticket) => ({
+      id: ticket.id,
+      subject: ticket.subject,
+      department: ticket.department || "",
+      priority: ticket.priority,
+      status: ticket.status,
+      assignedTo: ticket.assignedTo || "",
+      createdAt: ticket.createdAt
+    })),
+    kpis: dashboard.kpis || {},
+    technicianKpis: dashboard.technicianKpis || [],
+    technicians: (dashboard.technicians || []).map((technician) => ({
+      id: technician.id,
+      name: technician.name,
+      isActive: technician.isActive
+    }))
+  };
+}
+
 export function createHelpdeskStore({ supabase = null, localPaths = {}, isProduction = false } = {}) {
   if (isProduction && !supabase) {
     throw new Error("Supabase is required in production.");

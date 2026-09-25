@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { createHelpdeskStore } from "../src/server/helpdesk-store.js";
+import { createHelpdeskStore, toPublicDashboard } from "../src/server/helpdesk-store.js";
 import { createAuthService } from "../src/server/auth-service.js";
 
 const validTicket = {
@@ -82,10 +82,13 @@ test("authorization rejects pending users and accepts approved administrators", 
   const auth = createAuthService({ supabase, localAdminToken: "local-admin-token" });
 
   await assert.rejects(() => auth.requireRole("pending-token", "user"), (error) => error.status === 403);
+  const pending = await auth.authenticate("pending-token");
+  assert.equal(pending.approvalStatus, "pending");
   const admin = await auth.requireRole("admin-token", "admin");
   assert.equal(admin.role, "admin");
   const localAdmin = await auth.requireRole("local-admin-token", "admin");
   assert.equal(localAdmin.email, "kokseng.lai@ecoworld.my");
+  assert.equal(localAdmin.mustChangePassword, true);
 });
 
 test("local store manages pending users and technician KPI data", async () => {
@@ -113,5 +116,37 @@ test("local store manages pending users and technician KPI data", async () => {
 
   assert.equal(approved.approvalStatus, "approved");
   assert.equal(dashboard.technicianKpis[0].closed, 1);
+  assert.equal(dashboard.kpis.totalTickets, 1);
+});
+
+test("public dashboard removes requester and private ticket details", () => {
+  const dashboard = toPublicDashboard({
+    tickets: [{
+      id: "HD-0001",
+      subject: "VPN access",
+      requesterName: "Mei Lin",
+      email: "mei@example.com",
+      description: "Contains a private error message",
+      department: "Finance",
+      priority: "High",
+      status: "Open",
+      assignedTo: "Alex Tan",
+      createdAt: "2026-09-25T00:00:00.000Z"
+    }],
+    kpis: { totalTickets: 1 },
+    technicianKpis: [{ name: "Alex Tan", open: 1 }],
+    technicians: [{ id: "tech-1", name: "Alex Tan", email: "alex@example.com", isActive: true }]
+  });
+
+  assert.deepEqual(dashboard.tickets[0], {
+    id: "HD-0001",
+    subject: "VPN access",
+    department: "Finance",
+    priority: "High",
+    status: "Open",
+    assignedTo: "Alex Tan",
+    createdAt: "2026-09-25T00:00:00.000Z"
+  });
+  assert.equal(dashboard.technicians[0].email, undefined);
   assert.equal(dashboard.kpis.totalTickets, 1);
 });

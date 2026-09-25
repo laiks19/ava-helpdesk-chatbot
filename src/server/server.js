@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import pdfParse from "pdf-parse";
 import OpenAI from "openai";
 import { createSupabaseAdminClient } from "./supabase-admin.js";
-import { createHelpdeskStore } from "./helpdesk-store.js";
+import { createHelpdeskStore, toPublicDashboard } from "./helpdesk-store.js";
 import { bearerToken, createAuthService } from "./auth-service.js";
 import {
   createSupabaseRestClient,
@@ -70,6 +70,7 @@ const port = process.env.PORT || 3001;
 const adminUsername = process.env.AVA_ADMIN_USERNAME || "kokseng.lai@ecoworld.my";
 let adminPassword = getAdminPassword();
 const adminToken = process.env.AVA_ADMIN_TOKEN || "ava-local-admin";
+let localAdminMustChangePassword = true;
 
 if (!isVercel || !supabaseEnabled) {
   await mkdir(pdfDir, { recursive: true });
@@ -81,12 +82,16 @@ await sessions.load();
 
 const knowledgeBase = createKnowledgeBase(await loadIndex());
 const helpdeskStore = createHelpdeskStore({
-  supabase: supabaseAdmin,
+  supabase: isVercel ? supabaseAdmin : null,
   localPaths: { tickets: ticketsPath, users: usersPath, technicians: techniciansPath },
   isProduction: isVercel
 });
 await helpdeskStore.initialize();
-const authService = createAuthService({ supabase: supabaseAdmin, localAdminToken: adminToken });
+const authService = createAuthService({
+  supabase: supabaseAdmin,
+  localAdminToken: adminToken,
+  localAdminMustChangePassword: () => localAdminMustChangePassword
+});
 const logger = createConversationLogger({ logDir: helpdeskLogDir, date: currentDateString() });
 
 const storage = multer.diskStorage({
@@ -124,11 +129,11 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.get("/api/dashboard", asyncRoute(async (_req, res) => {
-  res.json(await helpdeskStore.getDashboard());
+  res.json(toPublicDashboard(await helpdeskStore.getDashboard()));
 }));
 
 app.get("/api/tickets", asyncRoute(async (_req, res) => {
-  res.json(await helpdeskStore.getDashboard());
+  res.json(toPublicDashboard(await helpdeskStore.getDashboard()));
 }));
 
 app.post("/api/tickets", asyncRoute(async (req, res) => {
@@ -144,10 +149,10 @@ app.post("/api/tickets", asyncRoute(async (req, res) => {
     requesterUserId: profile?.id || "",
     actorUserId: profile?.id || ""
   });
-  res.status(201).json({ ticket, ...(await helpdeskStore.getDashboard()) });
+  res.status(201).json({ ticket, ...toPublicDashboard(await helpdeskStore.getDashboard()) });
 }));
 
-app.get("/api/me", requireApprovedUser, asyncRoute(async (req, res) => {
+app.get("/api/me", requireAuthenticated, asyncRoute(async (req, res) => {
   res.json({ profile: req.profile });
 }));
 
@@ -369,7 +374,7 @@ app.post("/api/session/:sessionId/ticket/answer", asyncRoute(async (req, res) =>
     intakeActive: false,
     ticketCreated: true,
     ticket,
-    dashboard: await helpdeskStore.getDashboard(),
+    dashboard: toPublicDashboard(await helpdeskStore.getDashboard()),
     messages: [userMessage, assistantMessage],
     answer: content
   });
@@ -532,6 +537,7 @@ app.post("/api/admin/change-password", requireAdmin, asyncRoute(async (req, res)
       return;
     }
     adminPassword = newPassword;
+    localAdminMustChangePassword = false;
   }
   const profile = await helpdeskStore.updateUser(req.profile.id, { mustChangePassword: false });
   res.json({ ok: true, profile });
@@ -680,6 +686,15 @@ async function requireAdmin(req, res, next) {
 async function requireApprovedUser(req, res, next) {
   try {
     req.profile = await authService.requireRole(bearerToken(req), "user");
+    next();
+  } catch (error) {
+    res.status(error.status || 401).json({ error: error.message || "Sign in required." });
+  }
+}
+
+async function requireAuthenticated(req, res, next) {
+  try {
+    req.profile = await authService.authenticate(bearerToken(req));
     next();
   } catch (error) {
     res.status(error.status || 401).json({ error: error.message || "Sign in required." });

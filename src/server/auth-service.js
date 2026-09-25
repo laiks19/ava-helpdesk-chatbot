@@ -18,7 +18,7 @@ function normalizeProfile(row) {
   };
 }
 
-export function createAuthService({ supabase = null, localAdminToken = "" } = {}) {
+export function createAuthService({ supabase = null, localAdminToken = "", localAdminMustChangePassword = true } = {}) {
   async function authenticate(token) {
     const cleanToken = String(token || "").replace(/^Bearer\s+/i, "").trim();
     if (!cleanToken) throw authError("Sign in is required.", 401);
@@ -31,7 +31,9 @@ export function createAuthService({ supabase = null, localAdminToken = "" } = {}
         role: "admin",
         approvalStatus: "approved",
         isActive: true,
-        mustChangePassword: false
+        mustChangePassword: typeof localAdminMustChangePassword === "function"
+          ? localAdminMustChangePassword()
+          : localAdminMustChangePassword
       };
     }
     if (!supabase) throw authError("This login session is not valid.", 401);

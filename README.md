@@ -1,6 +1,6 @@
 # Ava IT Helpdesk ChatBot
 
-Ava is a local-first IT helpdesk chatbot website. Users can chat without logging in, while an Admin page uploads PDF knowledge files that Ava searches before falling back to the OpenAI API.
+Ava is an IT helpdesk portal with guest ticket submission, optional user accounts, a local-PDF-first assistant, full administration, and MIS support KPIs.
 
 ## What It Does
 
@@ -11,10 +11,15 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 - Supports uploading multiple PDFs, up to 50 total files.
 - Lets Admin remove uploaded PDFs from the library.
 - Politely rejects questions outside IT support.
-- Suggests IT Helpdesk contact after the same unresolved question is repeated more than 5 times.
+- Offers IT Helpdesk escalation when troubleshooting remains unresolved.
+- Prepares an email draft with an AI-generated case summary for both Helpdesk recipients.
+- Downloads long conversation transcripts for the user to attach to the email draft.
 - Saves ended conversations into `helpdesklog/`.
 - Clears session memory after a conversation is ended.
-- Includes a separate Admin PDF Library page.
+- Lets users register for approval and view tickets linked to their account.
+- Gives administrators full ticket, user, technician, PDF, and password controls.
+- Tracks Open, In Progress, and Closed work by technician.
+- Lets Ava collect ticket details conversationally and return a ticket number.
 - Adds tactile click effects to buttons.
 
 ## Tech Stack
@@ -26,7 +31,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 - pdf-parse for PDF text extraction
 - OpenAI Node SDK for fallback answers
 - Default OpenAI fallback model: `gpt-4o`
-- Optional Supabase REST/Storage persistence for production hosting
+- Supabase Auth, Postgres, and Storage for production hosting
 - Node.js built-in test runner
 
 ## How To Run
@@ -42,7 +47,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
    ```env
    OPENAI_API_KEY=your_openai_api_key_here
    OPENAI_MODEL=gpt-4o
-   AVA_ADMIN_USERNAME=Admin
+   AVA_ADMIN_USERNAME=kokseng.lai@ecoworld.my
    AVA_ADMIN_PASSWORD=admin123
    SUPABASE_URL=your_supabase_project_url
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
@@ -60,7 +65,7 @@ Ava is a local-first IT helpdesk chatbot website. Users can chat without logging
 4. Open:
 
    - Chat: `http://127.0.0.1:5173`
-   - Admin PDF Library: `http://127.0.0.1:5173/#admin`
+   - Admin Console: `http://127.0.0.1:5173/#admin`
 
 Do not double-click `index.html` to run the chatbot. Ava needs the local server for chat APIs, PDF upload, memory, and logs. If you use the production server command instead, open `http://127.0.0.1:3001`.
 
@@ -69,11 +74,11 @@ Do not double-click `index.html` to run the chatbot. Ava needs the local server 
 The default local Admin login is:
 
 ```text
-Username: Admin
+Email: kokseng.lai@ecoworld.my
 Password: admin123
 ```
 
-Change it by setting `AVA_ADMIN_USERNAME` and `AVA_ADMIN_PASSWORD` in `.env.local`.
+The admin is prompted to change the bootstrap password from the **Security** tab. For local preview, the fallback credentials can also be changed with `AVA_ADMIN_USERNAME` and `AVA_ADMIN_PASSWORD` in `.env.local`.
 
 ## Folder Structure
 
@@ -105,23 +110,41 @@ Ended conversations are appended to:
 helpdesklog/YYYY-MM-DD-conversation-log.md
 ```
 
-When a user clicks **End conversation**, Ava writes the transcript and deletes that tab session from active memory.
+When a user clicks **End conversation**, Ava writes the transcript and deletes that tab session from active memory. **Contact Helpdesk** also archives and clears the session after preparing the email draft. Ava never sends the email automatically; the user reviews it and presses Send in their email application.
 
 ## Supabase Setup
 
-For Vercel production, create a Supabase project, run `supabase/schema.sql` in the SQL editor, and create a private Storage bucket named `helpdesk-pdfs`. Then set these values as Vercel Environment Variables, preferably as sensitive/secret values:
+For production, create a Supabase project and apply the ordered migrations:
+
+```bash
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase db push
+```
+
+The migrations create Ava persistence, accounts, technicians, tickets, activity history, RLS policies, indexes, and the private `helpdesk-pdfs` bucket. Then configure local `.env.local` and Vercel Environment Variables:
 
 ```env
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o
-AVA_ADMIN_USERNAME=Admin
+AVA_ADMIN_USERNAME=kokseng.lai@ecoworld.my
 AVA_ADMIN_PASSWORD=admin123
 ```
 
-When Supabase variables are set, Ava stores PDF metadata/text, active sessions, conversation logs, and uploaded PDF files in Supabase. Without them, Ava keeps using local `data/` and `helpdesklog/`.
+Never expose `SUPABASE_SERVICE_ROLE_KEY` or `OPENAI_API_KEY` with a `VITE_` prefix. Only the Supabase publishable key belongs in the browser.
+
+Bootstrap the first administrator after applying migrations:
+
+```bash
+npm run bootstrap-admin
+```
+
+For Vercel, import the GitHub repository, keep `npm run build` as the build command, and add the same variables for Production and Preview. Deploy after the migrations and bootstrap finish. Supabase stores production tickets, users, technicians, PDFs, active sessions, and conversation logs. Local development intentionally uses JSON ticket data so it can run before a remote migration is applied.
 
 ## Testing
 
@@ -131,13 +154,4 @@ Run:
 npm test
 ```
 
-The tests cover tab session isolation, local-PDF-first answer routing, Admin login, PDF deletion, support-topic routing, repeated-question escalation, and conversation logging with memory cleanup.
-
-## What's Coming Next
-
-- Stronger Admin authentication.
-- Better semantic PDF search with embeddings.
-- PDF re-index controls.
-- Conversation export filters.
-- Production deployment setup.
-- Ticket system integrations.
+The tests cover authentication and approval rules, ticket lifecycle, technician KPI data, Ava ticket intake, local-PDF-first answer routing, Admin login, PDF deletion, Helpdesk escalation, and conversation logging.

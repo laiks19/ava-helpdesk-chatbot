@@ -448,6 +448,28 @@ test("Admin page has controls for deleting uploaded PDFs and an Ava icon", async
   assert.match(source, /aria-label="Ava assistant icon"/);
 });
 
+test("client exposes Supabase accounts full admin tools technician KPI and Ava intake", async () => {
+  const [mainSource, authSource, adminSource] = await Promise.all([
+    readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/client/auth.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/client/admin-console.jsx", import.meta.url), "utf8")
+  ]);
+
+  assert.match(authSource, /signInWithPassword/);
+  assert.match(authSource, /signUp/);
+  assert.match(authSource, /approvalStatus/);
+  assert.match(adminSource, /Tickets/);
+  assert.match(adminSource, /Users/);
+  assert.match(adminSource, /Technicians/);
+  assert.match(adminSource, /Ava Knowledge/);
+  assert.match(adminSource, /Security/);
+  assert.match(mainSource, /technicianKpis/);
+  assert.match(mainSource, /My Tickets/);
+  assert.match(mainSource, /startTicketIntake/);
+  assert.doesNotMatch(authSource + adminSource, /admin123/);
+  assert.doesNotMatch(authSource + adminSource + mainSource, /SUPABASE_SERVICE_ROLE_KEY/);
+});
+
 test("OpenAI system prompt tells Ava to handle follow-up messages as the same support case", async () => {
   const source = await readFile(new URL("../src/server/server.js", import.meta.url), "utf8");
 

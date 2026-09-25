@@ -167,6 +167,23 @@ test("helpdesk migration creates protected account and ticket tables", async () 
   assert.match(sql, /revoke all/i);
 });
 
+test("ordered Supabase migrations include Ava persistence and private PDF storage", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationNames = (await readdir(migrationsDir)).sort();
+  const coreName = migrationNames.find((name) => name.endsWith("_ava_core.sql"));
+  const helpdeskName = migrationNames.find((name) => name.endsWith("_helpdesk_accounts_and_ticketing.sql"));
+  assert.ok(coreName);
+  assert.ok(helpdeskName);
+  assert.ok(coreName < helpdeskName, "Ava core migration must run before helpdesk accounts");
+  const sql = await readFile(path.join(migrationsDir, coreName), "utf8");
+  for (const table of ["ava_documents", "ava_sessions", "ava_conversation_logs"]) {
+    assert.match(sql, new RegExp(`create table if not exists public\\.${table}`, "i"));
+    assert.match(sql, new RegExp(`alter table public\\.${table} enable row level security`, "i"));
+  }
+  assert.match(sql, /helpdesk-pdfs/);
+  assert.match(sql, /public\s*=\s*false/i);
+});
+
 test("browser Supabase client uses only publishable environment values", async () => {
   const clientPath = path.join(projectRoot, "src", "client", "supabase-client.js");
   assert.equal(existsSync(clientPath), true, "browser Supabase client is missing");
