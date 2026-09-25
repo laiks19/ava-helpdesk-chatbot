@@ -250,7 +250,7 @@ function Header({ activeRoute, auth, onOpenAuth }) {
   return (
     <header className="app-header">
       <a className="brand" href="#submit" aria-label="Ava HelpDesk home">
-        <span className="brand-mark">A</span>
+        <img className="brand-mark" src="/ava-helpdesk-logo.png" alt="Ava HelpDesk" />
         <span>Ava HelpDesk</span>
       </a>
       <nav className="main-nav" aria-label="Main navigation">
@@ -662,19 +662,7 @@ function Message({ message }) {
 }
 
 function RobotIcon({ small = false }) {
-  return (
-    <svg className={small ? "ava-icon ava-icon-small" : "ava-icon"} viewBox="0 0 64 64" role="img" aria-label="Ava assistant icon">
-      <rect className="ava-icon-shadow" x="12" y="20" width="40" height="34" rx="13" />
-      <path className="ava-icon-antenna" d="M32 20V9" />
-      <circle className="ava-icon-node" cx="32" cy="8" r="5" />
-      <rect className="ava-icon-face" x="10" y="18" width="44" height="34" rx="13" />
-      <circle className="ava-icon-eye" cx="24" cy="34" r="4" />
-      <circle className="ava-icon-eye" cx="40" cy="34" r="4" />
-      <path className="ava-icon-mouth" d="M25 43c4 3 10 3 14 0" />
-      <path className="ava-icon-ear" d="M10 31H6v9h4" />
-      <path className="ava-icon-ear" d="M54 31h4v9h-4" />
-    </svg>
-  );
+  return <img className={small ? "ava-icon ava-icon-small" : "ava-icon"} src="/ava-helpdesk-logo.png" alt="Ava assistant" />;
 }
 
 function Icon({ name }) {

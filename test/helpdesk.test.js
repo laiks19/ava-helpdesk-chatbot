@@ -383,6 +383,15 @@ test("homepage includes a secure externally linked AI news section", async () =>
   assert.match(newsSource, /lastRefresh\?\.status/);
 });
 
+test("Ava branding uses the approved accessible helpdesk logo asset", async () => {
+  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+  const logo = await readFile(new URL("../public/ava-helpdesk-logo.png", import.meta.url));
+
+  assert.match(source, /src="\/ava-helpdesk-logo\.png"/);
+  assert.match(source, /alt="Ava HelpDesk"/);
+  assert.ok(logo.length > 10_000);
+});
+
 test("chat page does not show local PDF searching text or source labels", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
   const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";

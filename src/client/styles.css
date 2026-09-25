@@ -66,16 +66,10 @@ a {
 }
 
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
-  color: #fff;
-  background: linear-gradient(135deg, #007892, #14a7bd);
-  font-size: 27px;
-  font-weight: 850;
-  letter-spacing: 0;
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
 }
 
 .main-nav {
@@ -1073,43 +1067,12 @@ select:disabled {
   width: 60px;
   height: 60px;
   flex: 0 0 auto;
-  overflow: visible;
+  object-fit: contain;
 }
 
 .ava-icon-small {
   width: 42px;
   height: 42px;
-}
-
-.ava-icon-shadow {
-  fill: rgba(7, 95, 120, 0.16);
-}
-
-.ava-icon-face {
-  fill: #e9f8fb;
-  stroke: #075f78;
-  stroke-width: 2.4;
-}
-
-.ava-icon-antenna,
-.ava-icon-mouth,
-.ava-icon-ear {
-  fill: none;
-  stroke: #075f78;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2.7;
-}
-
-.ava-icon-node {
-  fill: #82dbea;
-  stroke: #075f78;
-  stroke-width: 2.2;
-}
-
-.ava-icon-eye {
-  fill: #111d27;
-  filter: drop-shadow(0 0 3px rgba(20, 190, 210, 0.55));
 }
 
 .admin-workspace {
