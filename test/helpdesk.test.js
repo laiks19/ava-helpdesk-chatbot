@@ -354,22 +354,39 @@ test("published Sites frontend points API calls to the local Ava server", () => 
   assert.match(connectionErrorMessage(), /npm run server/);
 });
 
-test("app shell exposes ticket submission, Ava, MIS dashboard, and admin navigation", async () => {
+test("public app shell exposes ticket submission Ava and role-aware account navigation", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
 
   assert.match(source, /Submit Ticket/);
   assert.match(source, /Ask Ava/);
-  assert.match(source, /MIS Dashboard/);
-  assert.match(source, /Admin/);
   assert.match(source, /TicketSubmission/);
-  assert.match(source, /Dashboard/);
   assert.match(source, /ChatPage/);
+  assert.match(source, /auth\.profile\?\.role === "admin"/);
+  assert.match(source, /auth\.profile\?\.approvalStatus === "approved"/);
+  assert.match(source, /auth\.profile\?\.isActive === true/);
+  assert.doesNotMatch(source, /\["dashboard", "MIS Dashboard"/);
+  assert.doesNotMatch(source, /request\("\/api\/dashboard"\)/);
+});
+
+test("homepage includes a secure externally linked AI news section", async () => {
+  const [mainSource, newsSource] = await Promise.all([
+    readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/client/ai-news.jsx", import.meta.url), "utf8")
+  ]);
+
+  assert.match(mainSource, /aiNews\(\)/);
+  assert.match(mainSource, /AiNews/);
+  assert.match(newsSource, /Latest AI Updates/);
+  assert.match(newsSource, /items\.slice\(1, 5\)/);
+  assert.match(newsSource, /target="_blank"/);
+  assert.match(newsSource, /rel="noreferrer noopener"/);
+  assert.match(newsSource, /lastRefresh\?\.status/);
 });
 
 test("chat page does not show local PDF searching text or source labels", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
   const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";
-  const messageComponent = source.match(/function Message\(\{ message \}\) \{[\s\S]*?\nfunction AdminPage/)?.[0] || "";
+  const messageComponent = source.match(/function Message\(\{ message \}\) \{[\s\S]*?\nfunction RobotIcon/)?.[0] || "";
 
   assert.doesNotMatch(chatPage, /checking the PDF library/i);
   assert.doesNotMatch(chatPage, /searching.*PDF/i);
@@ -425,27 +442,13 @@ test("admin password placeholder falls back to admin123", () => {
   assert.equal(getAdminPassword({ AVA_ADMIN_PASSWORD: "custom-password" }), "custom-password");
 });
 
-test("Admin page does not persist login across refreshes", async () => {
-  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
-  const adminPage = source.match(/function AdminPage\(\{ tickets, onTicketUpdate \}\) \{[\s\S]*?\nfunction AdminTicketBoard/)?.[0] || "";
+test("Admin console keeps login private and manages Ava knowledge", async () => {
+  const source = await readFile(new URL("../src/client/admin-console.jsx", import.meta.url), "utf8");
 
-  assert.doesNotMatch(adminPage, /localStorage/);
-  assert.match(adminPage, /useState\(""\)/);
-});
-
-test("Admin page does not display the default password", async () => {
-  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
-  const adminPage = source.match(/function AdminPage\(\) \{[\s\S]*?\nfunction formatBytes/)?.[0] || "";
-
-  assert.doesNotMatch(adminPage, /placeholder="admin123"/);
-});
-
-test("Admin page has controls for deleting uploaded PDFs and an Ava icon", async () => {
-  const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
-
+  assert.doesNotMatch(source, /localStorage/);
+  assert.doesNotMatch(source, /placeholder="admin123"/);
   assert.match(source, /deletePdf/);
-  assert.match(source, /Delete PDF/);
-  assert.match(source, /aria-label="Ava assistant icon"/);
+  assert.match(source, /Delete/);
 });
 
 test("client exposes Supabase accounts full admin tools technician KPI and Ava intake", async () => {
@@ -459,11 +462,14 @@ test("client exposes Supabase accounts full admin tools technician KPI and Ava i
   assert.match(authSource, /signUp/);
   assert.match(authSource, /approvalStatus/);
   assert.match(adminSource, /Tickets/);
+  assert.match(adminSource, /MIS Dashboard/);
   assert.match(adminSource, /Users/);
   assert.match(adminSource, /Technicians/);
   assert.match(adminSource, /Ava Knowledge/);
   assert.match(adminSource, /Security/);
-  assert.match(mainSource, /technicianKpis/);
+  assert.match(adminSource, /Promise\.allSettled/);
+  assert.match(mainSource, /adminDashboard/);
+  assert.match(adminSource, /technicianKpis/);
   assert.match(mainSource, /My Tickets/);
   assert.match(mainSource, /startTicketIntake/);
   assert.doesNotMatch(authSource + adminSource, /admin123/);

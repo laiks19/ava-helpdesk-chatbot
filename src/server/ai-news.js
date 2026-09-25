@@ -111,19 +111,28 @@ export async function refreshAiNews({
   }
 
   let items = deduplicateNews(collected).slice(0, 12);
+  let summaryFailureCount = 0;
   if (items.length && summarize) {
     items = await Promise.all(items.map(async (item) => {
       try {
         const result = await summarize({ ...item });
+        const summary = cleanText(result?.summary, 520);
+        const recommendation = cleanText(result?.recommendation, 240);
+        if (!summary || !recommendation) throw new Error("Invalid summary response");
         return {
           ...item,
-          summary: cleanText(result?.summary, 520) || item.summary,
-          recommendation: cleanText(result?.recommendation, 240) || item.recommendation
+          summary,
+          recommendation
         };
       } catch {
+        summaryFailureCount += 1;
         return item;
       }
     }));
+  }
+
+  if (summaryFailureCount) {
+    sourceResults.push({ source: "OpenAI summaries", status: "failed", itemCount: 0, error: `${summaryFailureCount} article summaries used fallback text` });
   }
 
   const failedSources = sourceResults.filter((result) => result.status === "failed");

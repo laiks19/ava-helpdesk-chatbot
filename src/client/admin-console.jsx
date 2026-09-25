@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 
-const tabs = ["Tickets", "Users", "Technicians", "Ava Knowledge", "Security"];
+const tabs = ["MIS Dashboard", "Tickets", "Users", "Technicians", "Ava Knowledge", "Security"];
 const statuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
 const emptyTicket = {
   requesterName: "",
@@ -18,11 +18,12 @@ const emptyTicket = {
   resolutionNote: ""
 };
 
-export function AdminConsole({ api, auth, dashboard, onDashboard }) {
-  const [tab, setTab] = useState("Tickets");
+export function AdminConsole({ api, auth }) {
+  const [tab, setTab] = useState("MIS Dashboard");
   const [credentials, setCredentials] = useState({ email: "kokseng.lai@ecoworld.my", password: "" });
+  const [dashboard, setDashboard] = useState({ tickets: [], kpis: {}, technicianKpis: [], technicians: [] });
   const [users, setUsers] = useState([]);
-  const [technicians, setTechnicians] = useState(dashboard.technicians || []);
+  const [technicians, setTechnicians] = useState([]);
   const [files, setFiles] = useState([]);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [ticketEditor, setTicketEditor] = useState(null);
@@ -32,21 +33,23 @@ export function AdminConsole({ api, auth, dashboard, onDashboard }) {
   const [notice, setNotice] = useState("");
 
   const token = auth.token;
-  const isAdmin = auth.profile?.role === "admin";
+  const isAdmin = auth.profile?.role === "admin" && auth.profile?.approvalStatus === "approved" && auth.profile?.isActive === true;
 
   useEffect(() => {
     if (!token || !isAdmin) return;
-    Promise.all([
-      api.adminTickets(token),
+    Promise.allSettled([
+      api.adminDashboard(token),
       api.adminUsers(token),
       api.adminTechnicians(token),
       api.pdfs(token)
-    ]).then(([ticketData, userData, technicianData, pdfData]) => {
-      onDashboard(ticketData);
-      setUsers(userData.users || []);
-      setTechnicians(technicianData.technicians || []);
-      setFiles(pdfData.files || []);
-    }).catch((error) => setNotice(error.message));
+    ]).then(([dashboardResult, userResult, technicianResult, pdfResult]) => {
+      if (dashboardResult.status === "fulfilled") setDashboard(dashboardResult.value);
+      if (userResult.status === "fulfilled") setUsers(userResult.value.users || []);
+      if (technicianResult.status === "fulfilled") setTechnicians(technicianResult.value.technicians || []);
+      if (pdfResult.status === "fulfilled") setFiles(pdfResult.value.files || []);
+      const failures = [dashboardResult, userResult, technicianResult, pdfResult].filter((result) => result.status === "rejected");
+      if (failures.length) setNotice(`${failures.length} admin section${failures.length === 1 ? "" : "s"} could not be loaded. You can still use the available sections.`);
+    });
   }, [api, isAdmin, token]);
 
   async function login(event) {
@@ -67,14 +70,14 @@ export function AdminConsole({ api, auth, dashboard, onDashboard }) {
       const result = ticketEditor.id
         ? await api.adminUpdateTicket(token, ticketEditor.id, payload)
         : await api.adminCreateTicket(token, payload);
-      onDashboard(result);
+      setDashboard(result);
       setTicketEditor(null);
     }, ticketEditor.id ? "Ticket updated." : "Ticket created.");
   }
 
   async function deleteTicket(ticket) {
     if (!window.confirm(`Delete ${ticket.id}? Its audit history will be retained.`)) return;
-    await run(async () => onDashboard(await api.adminDeleteTicket(token, ticket.id)), `${ticket.id} deleted.`);
+    await run(async () => setDashboard(await api.adminDeleteTicket(token, ticket.id)), `${ticket.id} deleted.`);
   }
 
   async function saveUser(event) {
@@ -108,7 +111,7 @@ export function AdminConsole({ api, auth, dashboard, onDashboard }) {
         : await api.adminCreateTechnician(token, technicianEditor);
       setTechnicians(result.technicians || []);
       setTechnicianEditor(null);
-      onDashboard(await api.adminTickets(token));
+      setDashboard(await api.adminDashboard(token));
     }, technicianEditor.id ? "Technician updated." : "Technician added.");
   }
 
@@ -117,7 +120,7 @@ export function AdminConsole({ api, auth, dashboard, onDashboard }) {
     await run(async () => {
       const result = await api.adminDeleteTechnician(token, technician.id);
       setTechnicians(result.technicians || []);
-      onDashboard(await api.adminTickets(token));
+      setDashboard(await api.adminDashboard(token));
     }, "Technician removed or deactivated.");
   }
 
@@ -184,6 +187,7 @@ export function AdminConsole({ api, auth, dashboard, onDashboard }) {
           {tabs.map((item) => <button className={tab === item ? "active" : ""} type="button" role="tab" aria-selected={tab === item} onClick={() => setTab(item)} key={item}>{item}</button>)}
         </div>
         {notice ? <p className="notice compact">{notice}</p> : null}
+        {tab === "MIS Dashboard" ? <AdminDashboard dashboard={dashboard} /> : null}
         {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
         {tab === "Technicians" ? <TechnicianAdmin technicians={technicians} busy={busy} editor={technicianEditor} setEditor={setTechnicianEditor} onSave={saveTechnician} onDelete={deleteTechnician} /> : null}
@@ -192,6 +196,61 @@ export function AdminConsole({ api, auth, dashboard, onDashboard }) {
       </section>
     </main>
   );
+}
+
+function AdminDashboard({ dashboard }) {
+  const tickets = dashboard.tickets || [];
+  const kpis = dashboard.kpis || {};
+  const priorities = kpis.byPriority || {};
+  const statuses = kpis.byStatus || {};
+  const priorityTotal = Math.max(1, Object.values(priorities).reduce((sum, value) => sum + value, 0));
+
+  return (
+    <section className="admin-section admin-dashboard">
+      <div className="admin-section-title">
+        <div><h2>MIS Helpdesk Overview</h2><p>Private ticket performance, workload, and support progress.</p></div>
+        <span className="dashboard-private-label">Admin only</span>
+      </div>
+      <div className="kpi-grid">
+        <Kpi title="Open Tickets" value={kpis.openTickets ?? 0} tone="blue" />
+        <Kpi title="Closed Today" value={kpis.closedToday ?? 0} tone="green" />
+        <Kpi title="Avg Resolution" value={`${kpis.averageResolutionHours ?? 0}h`} tone="cyan" />
+        <Kpi title="SLA Met" value={`${kpis.slaMetPercent ?? 100}%`} tone="green" />
+      </div>
+      <div className="analytics-grid">
+        <article className="chart-card">
+          <h3>Tickets by Priority</h3>
+          <div className="priority-summary">
+            {Object.entries(priorities).map(([label, value]) => (
+              <div className="priority-row" key={label}><span><i className={`dot ${label.toLowerCase()}`} />{label}</span><strong>{value}</strong><span className="priority-track"><i style={{ width: `${Math.max(4, (value / priorityTotal) * 100)}%` }} /></span></div>
+            ))}
+            {!Object.keys(priorities).length ? <p className="notice compact">No priority data yet.</p> : null}
+          </div>
+        </article>
+        <article className="chart-card">
+          <h3>Support Status</h3>
+          <div className="status-summary">
+            {Object.entries(statuses).map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
+            {!Object.keys(statuses).length ? <p className="notice compact">No status data yet.</p> : null}
+          </div>
+        </article>
+      </div>
+      <article className="technician-progress">
+        <div className="table-title"><div><h3>Technician Progress</h3><p>Current workload by IT support technician.</p></div></div>
+        <div className="tech-head"><span>Technician</span><span>Open</span><span>In Progress</span><span>Closed</span><span>Total</span></div>
+        {(dashboard.technicianKpis || []).map((row) => <div className="tech-row" key={row.id || row.name}><span><strong>{row.name}</strong></span><span>{row.open || 0}</span><span>{row.inProgress || 0}</span><span>{row.closed || 0}</span><span>{row.total || 0}</span></div>)}
+        {!dashboard.technicianKpis?.length ? <p className="notice compact">Add technicians and assign tickets to begin tracking progress.</p> : null}
+      </article>
+      <div className="admin-data-table dashboard-ticket-list">
+        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Priority</span></div>
+        {tickets.slice(0, 8).map((ticket) => <div className="admin-data-row" key={ticket.id}><span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span><span>{ticket.requesterName}<small>{ticket.department || "-"}</small></span><span>{ticket.assignedTo || "Unassigned"}</span><span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span><span>{ticket.priority}</span></div>)}
+      </div>
+    </section>
+  );
+}
+
+function Kpi({ title, value, tone }) {
+  return <article className={`kpi-card ${tone}`}><div><p>{title}</p><strong>{value}</strong><small>Current helpdesk data</small></div></article>;
 }
 
 function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, onDelete }) {

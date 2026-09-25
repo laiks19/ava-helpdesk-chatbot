@@ -1,6 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 
 const emptyState = { items: [], lastRefresh: null };
 
@@ -27,9 +26,10 @@ function createLocalNewsStore(localPath) {
   }
 
   async function replaceSuccessfulSources({ successfulSources = [], items = [] }) {
-    state.items = [...items, ...state.items.filter((item) => !successfulSources.includes(item.source))]
-      .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt))
-      .slice(0, 12);
+    const protectedItems = state.items.filter((item) => !successfulSources.includes(item.source)).slice(0, 12);
+    const remainingSlots = Math.max(0, 12 - protectedItems.length);
+    state.items = [...protectedItems, ...items.slice(0, remainingSlots)]
+      .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
     await persist();
   }
 
@@ -77,9 +77,11 @@ function createSupabaseNewsStore(supabase) {
       const { error } = await query;
       if (error) throw error;
     }
-    const { data: all, error: listError } = await supabase.from("ai_news_items").select("id").order("published_at", { ascending: false });
+    const { data: all, error: listError } = await supabase.from("ai_news_items").select("id,source").order("published_at", { ascending: false });
     if (listError) throw listError;
-    const excess = (all || []).slice(12).map((row) => row.id);
+    const protectedCount = (all || []).filter((row) => !successfulSources.includes(row.source)).length;
+    const successfulLimit = Math.max(0, 12 - protectedCount);
+    const excess = (all || []).filter((row) => successfulSources.includes(row.source)).slice(successfulLimit).map((row) => row.id);
     if (excess.length) {
       const { error } = await supabase.from("ai_news_items").delete().in("id", excess);
       if (error) throw error;
@@ -104,7 +106,7 @@ function normalizeState(value) {
 
 function itemToRow(item) {
   return {
-    id: item.id || randomUUID(),
+    ...(item.id ? { id: item.id } : {}),
     source: item.source,
     title: item.title,
     summary: item.summary,

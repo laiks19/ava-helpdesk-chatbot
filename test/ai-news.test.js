@@ -92,6 +92,25 @@ test("partial refresh publishes successful sources and retains failed source cac
   assert.match(result.errorMessage, /Google AI/i);
 });
 
+test("local store protects failed-source cache when successful source fills the item cap", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ava-ai-news-retention-"));
+  const localPath = path.join(directory, "ai-news.json");
+  try {
+    const cachedGoogle = Array.from({ length: 4 }, (_, index) => newsItem("Google AI", `Cached Google ${index}`, `https://blog.google/technology/ai/cached-${index}`, `2026-09-${19 - index}`));
+    const store = createAiNewsStore({ localPath });
+    await store.initialize();
+    await store.replaceSuccessfulSources({ successfulSources: ["Google AI"], items: cachedGoogle });
+    const incoming = Array.from({ length: 12 }, (_, index) => newsItem("OpenAI", `OpenAI ${index}`, `https://openai.com/news/${index}`, `2026-09-${24 - index}`));
+    await store.replaceSuccessfulSources({ successfulSources: ["OpenAI"], items: incoming });
+
+    const result = await store.list();
+    assert.equal(result.items.length, 12);
+    assert.equal(result.items.filter((item) => item.source === "Google AI").length, 4);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("total refresh failure preserves the previous cache", async () => {
   const store = memoryNewsStore([
     newsItem("OpenAI", "Cached", "https://openai.com/news/cached", "2026-09-20")
@@ -109,9 +128,9 @@ test("total refresh failure preserves the previous cache", async () => {
   assert.equal(store.replacements, 0);
 });
 
-test("summarizer failure uses deterministic safe text", async () => {
+test("summarizer failure uses deterministic safe text and records a partial refresh", async () => {
   const store = memoryNewsStore([]);
-  await refreshAiNews({
+  const result = await refreshAiNews({
     sources: [{ name: "OpenAI", feedUrl: "https://openai.com/news/rss.xml", allowedHostnames: ["openai.com"] }],
     fetchImpl: async () => response(rssXml("New model", "https://openai.com/news/model", "2026-09-24", "A practical model update for developers.")),
     store,
@@ -122,6 +141,27 @@ test("summarizer failure uses deterministic safe text", async () => {
   const item = (await store.list()).items[0];
   assert.match(item.summary, /practical model update/i);
   assert.match(item.recommendation, /MIS/i);
+  assert.equal(result.status, "partial");
+  assert.match(result.errorMessage, /summar/i);
+});
+
+test("empty summarizer output is treated as a partial refresh", async () => {
+  const store = memoryNewsStore([]);
+  const result = await refreshAiNews({
+    sources: [{ name: "OpenAI", feedUrl: "https://openai.com/news/rss.xml", allowedHostnames: ["openai.com"] }],
+    fetchImpl: async () => response(rssXml("New model", "https://openai.com/news/model", "2026-09-24", "Fallback summary.")),
+    store,
+    summarize: async () => ({ summary: "", recommendation: "" }),
+    now: () => new Date(fetchedAt)
+  });
+
+  assert.equal(result.status, "partial");
+  assert.equal((await store.list()).items[0].summary, "Fallback summary.");
+});
+
+test("Supabase news upserts do not replace existing primary keys", async () => {
+  const source = await readFile(path.join(process.cwd(), "src", "server", "ai-news-store.js"), "utf8");
+  assert.doesNotMatch(source, /id:\s*item\.id\s*\|\|\s*randomUUID/);
 });
 
 test("cron authorization requires an exact configured bearer secret", () => {

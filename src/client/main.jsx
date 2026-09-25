@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { connectionErrorMessage, getApiBaseUrl } from "./api-base.js";
 import { AdminConsole } from "./admin-console.jsx";
+import { AiNews } from "./ai-news.jsx";
 import { AuthDialog, AuthProvider, useAuth } from "./auth.jsx";
 import "./styles.css";
 
@@ -23,48 +24,12 @@ const defaultTicket = {
 const categories = ["Hardware", "Software", "Network", "Email", "Account Access", "Printer", "Security", "Other"];
 const priorities = ["Critical", "High", "Medium", "Low"];
 
-const seedTickets = [
-  {
-    id: "HD-1042",
-    subject: "Laptop not turning on",
-    requesterName: "John Doe",
-    department: "Finance",
-    priority: "Medium",
-    status: "In Progress",
-    createdAt: "2026-09-24T02:24:00.000Z",
-    closedAt: "",
-    slaHours: 24
-  },
-  {
-    id: "HD-1041",
-    subject: "Email not syncing",
-    requesterName: "Sarah Lim",
-    department: "Sales",
-    priority: "High",
-    status: "Open",
-    createdAt: "2026-09-24T01:17:00.000Z",
-    closedAt: "",
-    slaHours: 8
-  },
-  {
-    id: "HD-1040",
-    subject: "Access to CRM",
-    requesterName: "Michael Tan",
-    department: "Marketing",
-    priority: "Medium",
-    status: "Waiting on User",
-    createdAt: "2026-09-23T00:55:00.000Z",
-    closedAt: "",
-    slaHours: 24
-  }
-];
-
 const api = {
   async health() {
     return request("/api/health");
   },
-  async tickets() {
-    return request("/api/dashboard");
+  async aiNews() {
+    return request("/api/ai-news");
   },
   async createTicket(ticket, token = "") {
     return request("/api/tickets", {
@@ -87,6 +52,9 @@ const api = {
   },
   async adminTickets(token) {
     return request("/api/admin/tickets", { headers: authHeaders(token) });
+  },
+  async adminDashboard(token) {
+    return request("/api/admin/dashboard", { headers: authHeaders(token) });
   },
   async adminCreateTicket(token, ticket) {
     return request("/api/admin/tickets", { method: "POST", headers: authHeaders(token), body: JSON.stringify(ticket) });
@@ -218,13 +186,6 @@ function App() {
   const auth = useAuth();
   const [route, setRoute] = useState(hashToRoute());
   const [ticketDraft, setTicketDraft] = useState(defaultTicket);
-  const [ticketState, setTicketState] = useState({
-    tickets: seedTickets,
-    kpis: summarizeClientTickets(seedTickets),
-    technicianKpis: [],
-    technicians: [],
-    loading: true
-  });
   const [notice, setNotice] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
 
@@ -234,26 +195,6 @@ function App() {
     return () => removeEventListener("hashchange", onHash);
   }, []);
 
-  useEffect(() => {
-    refreshTickets();
-  }, []);
-
-  async function refreshTickets() {
-    try {
-      const data = await api.tickets();
-      setTicketState({
-        tickets: data.tickets || [],
-        kpis: data.kpis || summarizeClientTickets(data.tickets || []),
-        technicianKpis: data.technicianKpis || [],
-        technicians: data.technicians || [],
-        loading: false
-      });
-    } catch (error) {
-      setNotice(error.message);
-      setTicketState((current) => ({ ...current, loading: false }));
-    }
-  }
-
   function openTicketDraft(draft = {}) {
     setTicketDraft({ ...defaultTicket, ...draft });
     location.hash = "#submit";
@@ -261,20 +202,9 @@ function App() {
 
   async function createTicket(ticket) {
     const result = await api.createTicket(ticket, auth.token);
-    mergeDashboard(result);
     setNotice(`${result.ticket.id} submitted. A Helpdesk email draft is ready for review.`);
     openTicketEmail(result.ticket);
     return result.ticket;
-  }
-
-  function mergeDashboard(data) {
-    setTicketState((current) => ({
-      tickets: data.tickets || data.dashboard?.tickets || current.tickets,
-      kpis: data.kpis || data.dashboard?.kpis || current.kpis,
-      technicianKpis: data.technicianKpis || data.dashboard?.technicianKpis || current.technicianKpis,
-      technicians: data.technicians || data.dashboard?.technicians || current.technicians,
-      loading: false
-    }));
   }
 
   return (
@@ -282,23 +212,21 @@ function App() {
       <Header activeRoute={route} auth={auth} onOpenAuth={() => setAuthOpen(true)} />
       {notice ? <button className="global-notice" type="button" onClick={() => setNotice("")}>{notice}</button> : null}
       {route === "admin" ? (
-        <AdminConsole api={api} auth={auth} dashboard={ticketState} onDashboard={mergeDashboard} />
+        <AdminConsole api={api} auth={auth} />
       ) : route === "tickets" ? (
         <MyTickets auth={auth} onOpenAuth={() => setAuthOpen(true)} />
       ) : (
-        <main className="workspace">
-          <section className="submission-column" id="submit">
-            <TicketSubmission initialTicket={ticketDraft} onSubmit={createTicket} onClearDraft={() => setTicketDraft(defaultTicket)} />
-          </section>
-          <section className="dashboard-column" id="dashboard">
-            {route === "ava" ? (
-              <ChatPage panelMode="full" auth={auth} onTicketCreated={(data) => { mergeDashboard(data); setNotice(`${data.ticket?.id || "Ticket"} created by Ava.`); }} />
-            ) : (
-              <Dashboard tickets={ticketState.tickets} kpis={ticketState.kpis} technicianKpis={ticketState.technicianKpis} loading={ticketState.loading} />
-            )}
-          </section>
-          {route !== "ava" ? <ChatDock auth={auth} onTicketCreated={(data) => { mergeDashboard(data); setNotice(`${data.ticket?.id || "Ticket"} created by Ava.`); }} /> : null}
-        </main>
+        <>
+          <main className="workspace public-workspace">
+            <section className="submission-column" id="submit">
+              <TicketSubmission initialTicket={ticketDraft} onSubmit={createTicket} onClearDraft={() => setTicketDraft(defaultTicket)} />
+            </section>
+            <section className="assistant-column" id="ava">
+              <ChatPage panelMode="full" auth={auth} onTicketCreated={(data) => setNotice(`${data.ticket?.id || "Ticket"} created by Ava.`)} />
+            </section>
+          </main>
+          <AiNews api={api} />
+        </>
       )}
       {authOpen ? <AuthDialog onClose={() => setAuthOpen(false)} /> : null}
     </div>
@@ -307,21 +235,21 @@ function App() {
 
 function hashToRoute() {
   const hash = location.hash.replace("#", "");
-  return ["submit", "ava", "dashboard", "tickets", "admin"].includes(hash) ? hash : "dashboard";
+  if (hash === "dashboard") return "submit";
+  return ["submit", "ava", "tickets", "admin"].includes(hash) ? hash : "submit";
 }
 
 function Header({ activeRoute, auth, onOpenAuth }) {
   const navItems = [
     ["submit", "Submit Ticket", "file"],
     ["ava", "Ask Ava", "chat"],
-    ["dashboard", "MIS Dashboard", "chart"],
-    ["tickets", "My Tickets", "user"],
-    ["admin", "Admin", "gear"]
+    ...(auth.profile?.approvalStatus === "approved" && auth.profile?.isActive === true ? [["tickets", "My Tickets", "user"]] : []),
+    ...(auth.profile?.role === "admin" && auth.profile?.approvalStatus === "approved" && auth.profile?.isActive === true ? [["admin", "Admin Console", "gear"]] : [])
   ];
 
   return (
     <header className="app-header">
-      <a className="brand" href="#dashboard" aria-label="Ava HelpDesk dashboard">
+      <a className="brand" href="#submit" aria-label="Ava HelpDesk home">
         <span className="brand-mark">A</span>
         <span>Ava HelpDesk</span>
       </a>
@@ -334,10 +262,6 @@ function Header({ activeRoute, auth, onOpenAuth }) {
         ))}
       </nav>
       <div className="header-tools">
-        <div className="search-box">
-          <Icon name="search" />
-          <span>Search tickets, users, or assets...</span>
-        </div>
         {auth.profile ? (
           <div className="account-tools">
             <span className="account-name">{auth.profile.fullName || auth.profile.email}</span>
@@ -482,119 +406,6 @@ function MyTickets({ auth, onOpenAuth }) {
   return <main className="account-page"><section className="dashboard panel"><div className="section-title"><Icon name="user" /><div><h1>My Tickets</h1><p>Requests created while signed in to {auth.profile.email}.</p></div></div>{notice ? <p className="notice compact">{notice}</p> : null}<TicketTable tickets={tickets} manageLink={false} /></section></main>;
 }
 
-function Dashboard({ tickets, kpis, technicianKpis = [], loading }) {
-  const recent = tickets.length ? tickets.slice(0, 7) : loading ? seedTickets : [];
-  const priorityData = kpis?.byPriority || summarizeClientTickets(recent).byPriority;
-  const statusData = kpis?.byStatus || summarizeClientTickets(recent).byStatus;
-  const openTickets = kpis?.openTickets ?? 0;
-  const closedToday = kpis?.closedToday ?? 0;
-  const avgResolution = kpis?.averageResolutionHours ?? 0;
-  const slaMet = kpis?.slaMetPercent ?? 100;
-
-  return (
-    <div className="dashboard panel">
-      <div className="dashboard-heading">
-        <div className="section-title">
-          <Icon name="chart" />
-          <div>
-            <h2>MIS Helpdesk Overview</h2>
-            <p>Live ticket status and KPI monitoring for support performance.</p>
-          </div>
-        </div>
-        <div className="period-control">
-          <Icon name="calendar" />
-          <span>This Week</span>
-        </div>
-      </div>
-      {loading ? <p className="notice compact">Loading ticket KPI data...</p> : null}
-      <div className="kpi-grid">
-        <KpiCard title="Open Tickets" value={openTickets} trend="+12%" icon="file" tone="blue" />
-        <KpiCard title="Closed Today" value={closedToday} trend="+42%" icon="check" tone="green" />
-        <KpiCard title="Avg Resolution" value={`${avgResolution}h`} trend="-28%" icon="clock" tone="cyan" />
-        <KpiCard title="SLA Met" value={`${slaMet}%`} trend="+3%" icon="shield" tone="green" />
-      </div>
-      <div className="analytics-grid">
-        <PriorityChart data={priorityData} total={openTickets || Object.values(priorityData).reduce((sum, value) => sum + value, 0)} />
-        <StatusBars data={statusData} />
-      </div>
-      <TechnicianProgress rows={technicianKpis} />
-      <TicketTable tickets={recent} />
-    </div>
-  );
-}
-
-function TechnicianProgress({ rows }) {
-  return (
-    <article className="technician-progress">
-      <div className="table-title"><div><h3>Technician Progress</h3><p>Current workload by support technician.</p></div><a href="#admin">Manage team</a></div>
-      <div className="tech-head"><span>Technician</span><span>Open</span><span>In Progress</span><span>Closed</span><span>Total</span></div>
-      {rows.map((row) => <div className="tech-row" key={row.id || row.name}><span><strong>{row.name}</strong></span><span>{row.open || 0}</span><span>{row.inProgress || 0}</span><span>{row.closed || 0}</span><span>{row.total || 0}</span></div>)}
-      {!rows.length ? <p className="notice compact">Add IT support technicians in Admin to begin tracking team progress.</p> : null}
-    </article>
-  );
-}
-
-function KpiCard({ title, value, trend, icon, tone }) {
-  return (
-    <article className={`kpi-card ${tone}`}>
-      <span className="kpi-icon"><Icon name={icon} /></span>
-      <div>
-        <p>{title}</p>
-        <strong>{value}</strong>
-        <small>{trend} vs. last week</small>
-      </div>
-    </article>
-  );
-}
-
-function PriorityChart({ data, total }) {
-  const entries = Object.entries(data);
-  const critical = data.Critical || 0;
-  const high = data.High || 0;
-  const medium = data.Medium || 0;
-  const low = data.Low || 0;
-  const displayTotal = total || critical + high + medium + low;
-  const safeTotal = displayTotal || 1;
-  const gradient = displayTotal
-    ? `conic-gradient(#ef4444 0 ${critical / safeTotal}turn, #f97316 ${critical / safeTotal}turn ${(critical + high) / safeTotal}turn, #fbbf24 ${(critical + high) / safeTotal}turn ${(critical + high + medium) / safeTotal}turn, #22c55e ${(critical + high + medium) / safeTotal}turn 1turn)`
-    : "#e5edf3";
-
-  return (
-    <article className="chart-card">
-      <h3>Tickets by Priority</h3>
-      <div className="priority-chart">
-        <div className="donut" style={{ background: gradient }}>
-          <span>{displayTotal}</span>
-          <small>Total</small>
-        </div>
-        <div className="legend">
-          {entries.map(([label, value]) => (
-            <span key={label}><i className={`dot ${label.toLowerCase()}`} />{label}<strong>{value}</strong></span>
-          ))}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function StatusBars({ data }) {
-  const max = Math.max(1, ...Object.values(data));
-  return (
-    <article className="chart-card">
-      <h3>Support Status</h3>
-      <div className="bars">
-        {Object.entries(data).slice(0, 6).map(([label, value]) => (
-          <div className="bar-item" key={label}>
-            <strong>{value}</strong>
-            <span style={{ height: `${Math.max(8, (value / max) * 130)}px` }} />
-            <small>{label}</small>
-          </div>
-        ))}
-      </div>
-    </article>
-  );
-}
-
 function TicketTable({ tickets, manageLink = true }) {
   return (
     <article className="ticket-table">
@@ -618,31 +429,6 @@ function TicketTable({ tickets, manageLink = true }) {
       ))}
       {!tickets.length ? <p className="notice compact">No submitted tickets yet.</p> : null}
     </article>
-  );
-}
-
-function ChatDock({ auth, onTicketCreated }) {
-  const [open, setOpen] = useState(false);
-  if (!open) {
-    return (
-      <button className="chat-fab pressable" type="button" onClick={() => setOpen(true)} aria-label="Open Ava chatbot">
-        <RobotIcon small />
-        <span>Ask Ava</span>
-      </button>
-    );
-  }
-  return (
-    <aside className="chat-dock">
-      <div className="chat-dock-header">
-        <RobotIcon small />
-        <div>
-          <strong>Ask Ava</strong>
-          <span>Online</span>
-        </div>
-        <button type="button" onClick={() => setOpen(false)} aria-label="Minimize Ava chat">-</button>
-      </div>
-      <ChatPage panelMode="dock" auth={auth} onTicketCreated={onTicketCreated} />
-    </aside>
   );
 }
 
@@ -687,7 +473,7 @@ function ChatPage({ panelMode = "full", auth, onTicketCreated }) {
         : await api.chat(sessionId, text);
       setMessages((current) => [...current.filter((item) => item.content !== text || item.role !== "user"), ...response.messages]);
       setIntakeActive(Boolean(response.intakeActive));
-      if (response.ticketCreated) onTicketCreated?.(response.dashboard ? { ...response.dashboard, ticket: response.ticket } : response);
+      if (response.ticketCreated) onTicketCreated?.(response);
       if (response.contactRequested) setContactOpen(true);
     } catch (error) {
       setNotice(error.message);
@@ -848,178 +634,6 @@ function ContactHelpdeskDialog({ defaultName, busy, onClose, onSubmit }) {
   );
 }
 
-function AdminPage({ tickets, onTicketUpdate }) {
-  const [username, setUsername] = useState("Admin");
-  const [password, setPassword] = useState("");
-  const [token, setToken] = useState("");
-  const [files, setFiles] = useState([]);
-  const [selected, setSelected] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    if (!token) return;
-    api.pdfs(token).then((data) => setFiles(data.files || [])).catch(() => {
-      setToken("");
-    });
-  }, [token]);
-
-  async function login(event) {
-    event.preventDefault();
-    setBusy(true);
-    setNotice("");
-    try {
-      const response = await api.adminLogin(username, password);
-      setToken(response.token);
-    } catch (error) {
-      setNotice(error.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function upload(event) {
-    event.preventDefault();
-    if (!selected.length) return;
-    setBusy(true);
-    setNotice("");
-    try {
-      const response = await api.uploadPdfs(token, selected);
-      setFiles(response.files || []);
-      setSelected([]);
-      setNotice("PDF library updated and chunked into Ava's searchable knowledge base.");
-    } catch (error) {
-      setNotice(error.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deletePdf(file) {
-    if (!window.confirm(`Remove ${file.originalName} from Ava's PDF library?`)) return;
-    setBusy(true);
-    setNotice("");
-    try {
-      const response = await api.deletePdf(token, file.id);
-      setFiles(response.files || []);
-      setNotice("PDF removed from Ava's library.");
-    } catch (error) {
-      setNotice(error.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function changeTicketStatus(ticket, status) {
-    setBusy(true);
-    setNotice("");
-    try {
-      await onTicketUpdate(token, ticket.id, { status, assignedTo: "MIS Support" });
-    } catch (error) {
-      setNotice(error.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="admin-workspace">
-      <section className="admin-card panel">
-        <div className="admin-heading">
-          <div className="section-title">
-            <Icon name="gear" />
-            <div>
-              <h1>Admin Console</h1>
-              <p>Manage Ava's PDF library and close support tickets after resolution.</p>
-            </div>
-          </div>
-          {token ? <button className="secondary-button pressable" type="button" onClick={() => setToken("")}>Log out</button> : null}
-        </div>
-        {!token ? (
-          <form className="login-form" onSubmit={login}>
-            <Field label="Admin username">
-              <input value={username} onChange={(event) => setUsername(event.target.value)} type="text" placeholder="Admin" autoComplete="username" />
-            </Field>
-            <Field label="Admin password">
-              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="Enter password" autoComplete="current-password" />
-            </Field>
-            <button className="primary-button pressable" type="submit" disabled={busy}>Log in</button>
-          </form>
-        ) : (
-          <>
-            <div className="admin-grid">
-              <form className="upload-box" onSubmit={upload}>
-                <input
-                  id="pdfs"
-                  type="file"
-                  multiple
-                  accept="application/pdf,.pdf"
-                  onChange={(event) => setSelected(event.target.files)}
-                />
-                <label htmlFor="pdfs">
-                  <Icon name="paperclip" />
-                  <strong>Upload PDF Knowledge Files</strong>
-                  <span>{selected.length ? `${selected.length} selected` : "Click to browse up to 50 PDF files"}</span>
-                </label>
-                <button className="primary-button pressable" disabled={busy || !selected.length} type="submit">Upload PDFs</button>
-              </form>
-              <div className="schema-box">
-                <h3>Simple Ticket Data Structure</h3>
-                <ul>
-                  <li>Requester: name, email, department</li>
-                  <li>Issue: category, priority, subject, description</li>
-                  <li>Asset: device, location, optional attachment reference</li>
-                  <li>Lifecycle: ticket id, status, assigned staff, SLA hours, created, updated, closed</li>
-                  <li>Resolution: close status and support note</li>
-                </ul>
-              </div>
-            </div>
-            <div className="library-table">
-              <div className="library-head">
-                <span>File Name</span><span>Size</span><span>Pages</span><span>Status</span><span>Action</span>
-              </div>
-              {files.map((file) => (
-                <div className="library-row" key={file.id}>
-                  <span>{file.originalName}</span>
-                  <span>{formatBytes(file.size)}</span>
-                  <span>{file.pages || "-"}</span>
-                  <span className="indexed">Indexed</span>
-                  <button className="danger-button pressable" type="button" onClick={() => deletePdf(file)} disabled={busy}>Delete PDF</button>
-                </div>
-              ))}
-              {!files.length && <p className="notice compact">No PDFs uploaded yet.</p>}
-            </div>
-            <AdminTicketBoard tickets={tickets} busy={busy} onStatusChange={changeTicketStatus} />
-          </>
-        )}
-        {notice && <p className="notice compact">{notice}</p>}
-      </section>
-    </main>
-  );
-}
-
-function AdminTicketBoard({ tickets, busy, onStatusChange }) {
-  return (
-    <section className="admin-ticket-board">
-      <h2>Support Ticket Queue</h2>
-      <div className="admin-ticket-list">
-        {tickets.map((ticket) => (
-          <article className="ticket-management-row" key={ticket.id}>
-            <div>
-              <strong>{ticket.id} · {ticket.subject}</strong>
-              <span>{ticket.requesterName} · {ticket.email} · {ticket.priority}</span>
-            </div>
-            <select value={ticket.status} onChange={(event) => onStatusChange(ticket, event.target.value)} disabled={busy}>
-              {ticketStatuses.map((status) => <option key={status}>{status}</option>)}
-            </select>
-          </article>
-        ))}
-        {!tickets.length ? <p className="notice compact">No tickets submitted yet.</p> : null}
-      </div>
-    </section>
-  );
-}
-
 function Message({ message }) {
   const isUser = message.role === "user";
   const sourceLabel = {
@@ -1118,34 +732,9 @@ function openTicketEmail(ticket) {
   window.location.href = `mailto:${helpdeskRecipients.map(encodeURIComponent).join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-function summarizeClientTickets(tickets = []) {
-  const byPriority = { Critical: 0, High: 0, Medium: 0, Low: 0 };
-  const byStatus = { Open: 0, "In Progress": 0, "Waiting on User": 0, "On Hold": 0, Resolved: 0, Closed: 0 };
-  for (const ticket of tickets) {
-    if (byPriority[ticket.priority] !== undefined) byPriority[ticket.priority] += 1;
-    if (byStatus[ticket.status] !== undefined) byStatus[ticket.status] += 1;
-  }
-  return {
-    totalTickets: tickets.length,
-    openTickets: tickets.filter((ticket) => !["Resolved", "Closed"].includes(ticket.status)).length,
-    closedToday: tickets.filter((ticket) => ticket.closedAt).length,
-    averageResolutionHours: 0,
-    slaMetPercent: 100,
-    byPriority,
-    byStatus
-  };
-}
-
 function formatDate(value) {
   if (!value) return "-";
   return new Date(value).toLocaleString([], { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function formatBytes(bytes = 0) {
-  if (!bytes) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
 function slug(value = "") {

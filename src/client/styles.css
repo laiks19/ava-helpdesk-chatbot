@@ -178,8 +178,157 @@ a {
 }
 
 .submission-column,
-.dashboard-column {
+.dashboard-column,
+.assistant-column {
   min-width: 0;
+}
+
+.public-workspace {
+  align-items: start;
+  padding-top: 24px;
+  padding-bottom: 32px;
+}
+
+.assistant-column .chat-panel {
+  min-height: 760px;
+}
+
+.ai-news-band {
+  border-top: 1px solid #d9e4ec;
+  border-bottom: 1px solid #d9e4ec;
+  background: #0d2632;
+  color: #f7fbfd;
+}
+
+.ai-news-inner {
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: 38px 24px 44px;
+}
+
+.ai-news-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid #34505b;
+}
+
+.section-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: #6ed4e0;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ai-news-heading h2 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.ai-news-heading p {
+  max-width: 680px;
+  margin: 7px 0 0;
+  color: #b9cbd2;
+  line-height: 1.5;
+}
+
+.news-refreshed,
+.news-meta {
+  color: #9fb5bd;
+  font-size: 12px;
+}
+
+.ai-news-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, .9fr) minmax(480px, 1.4fr);
+  gap: 36px;
+  padding-top: 28px;
+}
+
+.news-lead {
+  padding-right: 28px;
+  border-right: 1px solid #34505b;
+}
+
+.news-lead h3 {
+  margin: 14px 0 12px;
+  font-size: 27px;
+  line-height: 1.2;
+}
+
+.news-lead p,
+.news-item p {
+  color: #bfd0d6;
+  line-height: 1.55;
+}
+
+.news-lead a {
+  display: inline-block;
+  margin-top: 10px;
+  color: #75dbe5;
+  font-weight: 800;
+}
+
+.news-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 28px;
+}
+
+.news-item {
+  padding: 4px 0 18px;
+  border-bottom: 1px solid #34505b;
+}
+
+.news-item h3 {
+  margin: 9px 0 5px;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.news-item h3 a:hover,
+.news-lead a:hover {
+  text-decoration: underline;
+}
+
+.news-item p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.news-lead .news-recommendation,
+.news-item .news-recommendation {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid #4db8c7;
+  color: #d8e5e9;
+}
+
+.news-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.news-meta span {
+  color: #75dbe5;
+  font-weight: 800;
+}
+
+.news-state {
+  margin: 26px 0 0;
+  color: #bfd0d6;
+}
+
+.news-warning {
+  padding: 10px 12px;
+  border-left: 3px solid #f2bd52;
+  color: #f3dfb5;
+  background: #173640;
 }
 
 .panel {
@@ -1228,6 +1377,75 @@ select:disabled {
   min-width: 0;
 }
 
+.admin-dashboard .kpi-grid {
+  margin-top: 20px;
+}
+
+.dashboard-private-label {
+  padding: 7px 10px;
+  border: 1px solid #b7d2dc;
+  border-radius: 6px;
+  color: #075b72;
+  background: #edf8fa;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.priority-summary,
+.status-summary {
+  display: grid;
+  gap: 13px;
+  margin-top: 18px;
+}
+
+.priority-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 34px minmax(100px, 1.5fr);
+  align-items: center;
+  gap: 10px;
+  color: #40546b;
+  font-size: 13px;
+}
+
+.priority-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #e7eef3;
+}
+
+.priority-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #1687a1;
+}
+
+.status-summary {
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+}
+
+.status-summary div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-left: 3px solid #1d8ba2;
+  background: #f3f8fa;
+  color: #40546b;
+  font-size: 13px;
+}
+
+.status-summary strong {
+  color: #102b3f;
+  font-size: 18px;
+}
+
+.dashboard-ticket-list {
+  margin-top: 16px;
+}
+
 .admin-editor {
   display: grid;
   gap: 14px;
@@ -1464,6 +1682,31 @@ select:disabled {
   .workspace,
   .admin-workspace {
     padding: 10px;
+  }
+
+  .assistant-column .chat-panel {
+    min-height: 620px;
+  }
+
+  .ai-news-inner {
+    padding: 28px 16px 34px;
+  }
+
+  .ai-news-heading,
+  .ai-news-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .news-lead {
+    padding: 0 0 24px;
+    border-right: 0;
+    border-bottom: 1px solid #34505b;
+  }
+
+  .news-list,
+  .status-summary {
+    grid-template-columns: 1fr;
   }
 
   .brand {
