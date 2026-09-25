@@ -8,6 +8,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pdfParse from "pdf-parse";
 import OpenAI from "openai";
+import { createSupabaseAdminClient } from "./supabase-admin.js";
+import { createHelpdeskStore } from "./helpdesk-store.js";
+import { bearerToken, createAuthService } from "./auth-service.js";
 import {
   createSupabaseRestClient,
   getSupabaseConfig,
@@ -19,7 +22,10 @@ import {
 
 import {
   addressUser,
+  buildHelpdeskContactDraft,
+  buildHelpdeskSummary,
   createConversationLogger,
+  createHelpdeskTicket,
   createKnowledgeBase,
   createSessionStore,
   createUploadedPdfDocument,
@@ -29,8 +35,15 @@ import {
   getOpenAiModel,
   resolveHelpdeskAnswer,
   resolveNameIntake,
+  startTicketIntake,
+  advanceTicketIntake,
   shouldWriteLocalConversationLog,
-  validateAdminCredentials
+  summarizeTicketKpis,
+  updateHelpdeskTicket,
+  validateAdminCredentials,
+  validateHelpdeskContact,
+  validateTicketInput,
+  wantsHelpdeskContact
 } from "./helpdesk-core.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +54,9 @@ dotenv.config({ path: path.join(projectRoot, ".env.local"), override: true });
 const dataDir = path.join(projectRoot, "data");
 const pdfDir = path.join(dataDir, "pdfs");
 const indexPath = path.join(dataDir, "pdf-index.json");
+const ticketsPath = path.join(dataDir, "tickets.json");
+const usersPath = path.join(dataDir, "users.json");
+const techniciansPath = path.join(dataDir, "technicians.json");
 const helpdeskLogDir = path.join(projectRoot, "helpdesklog");
 const activeSessionPath = path.join(helpdeskLogDir, "active-sessions.json");
 const isVercel = process.env.VERCEL === "1";
@@ -48,10 +64,11 @@ const supabaseEnabled = isSupabaseConfigured();
 const supabase = supabaseEnabled
   ? createSupabaseRestClient({ config: getSupabaseConfig() })
   : null;
+const supabaseAdmin = supabaseEnabled ? createSupabaseAdminClient() : null;
 const maxPdfFiles = 50;
 const port = process.env.PORT || 3001;
-const adminUsername = process.env.AVA_ADMIN_USERNAME || "Admin";
-const adminPassword = getAdminPassword();
+const adminUsername = process.env.AVA_ADMIN_USERNAME || "kokseng.lai@ecoworld.my";
+let adminPassword = getAdminPassword();
 const adminToken = process.env.AVA_ADMIN_TOKEN || "ava-local-admin";
 
 if (!isVercel || !supabaseEnabled) {
@@ -63,6 +80,13 @@ const sessions = createSessionStore({ persistPath: supabaseEnabled ? null : acti
 await sessions.load();
 
 const knowledgeBase = createKnowledgeBase(await loadIndex());
+const helpdeskStore = createHelpdeskStore({
+  supabase: supabaseAdmin,
+  localPaths: { tickets: ticketsPath, users: usersPath, technicians: techniciansPath },
+  isProduction: isVercel
+});
+await helpdeskStore.initialize();
+const authService = createAuthService({ supabase: supabaseAdmin, localAdminToken: adminToken });
 const logger = createConversationLogger({ logDir: helpdeskLogDir, date: currentDateString() });
 
 const storage = multer.diskStorage({
@@ -99,6 +123,62 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+app.get("/api/dashboard", asyncRoute(async (_req, res) => {
+  res.json(await helpdeskStore.getDashboard());
+}));
+
+app.get("/api/tickets", asyncRoute(async (_req, res) => {
+  res.json(await helpdeskStore.getDashboard());
+}));
+
+app.post("/api/tickets", asyncRoute(async (req, res) => {
+  const validation = validateTicketInput(req.body || {});
+  if (!validation.valid) {
+    res.status(400).json({ error: validation.error });
+    return;
+  }
+  let profile = null;
+  if (bearerToken(req)) profile = await authService.requireRole(bearerToken(req), "user");
+  const ticket = await helpdeskStore.createTicket(validation.ticket, {
+    source: req.body?.source || "form",
+    requesterUserId: profile?.id || "",
+    actorUserId: profile?.id || ""
+  });
+  res.status(201).json({ ticket, ...(await helpdeskStore.getDashboard()) });
+}));
+
+app.get("/api/me", requireApprovedUser, asyncRoute(async (req, res) => {
+  res.json({ profile: req.profile });
+}));
+
+app.get("/api/me/tickets", requireApprovedUser, asyncRoute(async (req, res) => {
+  const ownTickets = (await helpdeskStore.listTickets())
+    .filter((ticket) => ticket.requesterUserId === req.profile.id);
+  res.json({ tickets: ownTickets });
+}));
+
+app.get("/api/admin/tickets", requireAdmin, asyncRoute(async (_req, res) => {
+  res.json(await helpdeskStore.getDashboard());
+}));
+
+app.post("/api/admin/tickets", requireAdmin, asyncRoute(async (req, res) => {
+  const ticket = await helpdeskStore.createTicket(req.body || {}, {
+    source: "admin",
+    actorUserId: req.profile.id
+  });
+  res.status(201).json({ ticket, ...(await helpdeskStore.getDashboard()) });
+}));
+
+app.patch("/api/admin/tickets/:id", requireAdmin, asyncRoute(async (req, res) => {
+  const ticket = await helpdeskStore.updateTicket(req.params.id, req.body || {}, req.profile.id);
+  res.json({ ticket, ...(await helpdeskStore.getDashboard()) });
+}));
+
+app.delete("/api/admin/tickets/:id", requireAdmin, asyncRoute(async (req, res) => {
+  const ticket = await helpdeskStore.deleteTicket(req.params.id, req.profile.id);
+  res.json({ ticket, ...(await helpdeskStore.getDashboard()) });
+}));
+
 app.post("/api/chat", async (req, res) => {
   try {
     const sessionId = String(req.body.sessionId || "").trim();
@@ -111,6 +191,23 @@ app.post("/api/chat", async (req, res) => {
     await hydrateSession(sessionId);
     const userMessage = sessions.addMessage(sessionId, { role: "user", content: message });
     const history = sessions.getMessages(sessionId);
+    if (wantsHelpdeskContact(message, history)) {
+      const assistantMessage = sessions.addMessage(sessionId, {
+        role: "assistant",
+        content: "Certainly. Please enter your name and email address so I can prepare the Helpdesk email draft.",
+        source: "helpdesk_contact"
+      });
+      await sessions.save();
+      await saveSession(sessionId);
+      res.json({
+        sessionId,
+        source: "helpdesk_contact",
+        contactRequested: true,
+        messages: [userMessage, assistantMessage],
+        answer: assistantMessage.content
+      });
+      return;
+    }
     const nameResult = await resolveNameIntake({
       message,
       history,
@@ -163,10 +260,172 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+app.post("/api/session/:sessionId/ticket/start", asyncRoute(async (req, res) => {
+  const sessionId = String(req.params.sessionId || "").trim();
+  await hydrateSession(sessionId);
+  let profile = null;
+  if (bearerToken(req)) {
+    profile = await authService.requireRole(bearerToken(req), "user");
+  }
+  const state = startTicketIntake({
+    messages: sessions.getMessages(sessionId),
+    profile
+  });
+  const assistantMessage = sessions.addMessage(sessionId, {
+    role: "assistant",
+    content: state.answer,
+    source: "ticket_intake",
+    ticketDraft: state.draft,
+    timestamp: new Date().toISOString()
+  });
+  await sessions.save();
+  await saveSession(sessionId);
+  res.json({
+    sessionId,
+    intakeActive: true,
+    nextField: state.nextField,
+    messages: [assistantMessage],
+    answer: state.answer
+  });
+}));
+
+app.post("/api/session/:sessionId/ticket/answer", asyncRoute(async (req, res) => {
+  const sessionId = String(req.params.sessionId || "").trim();
+  const answer = String(req.body?.answer || "").trim();
+  if (!answer) {
+    res.status(400).json({ error: "Enter an answer so Ava can continue." });
+    return;
+  }
+  await hydrateSession(sessionId);
+  const history = sessions.getMessages(sessionId);
+  const previous = [...history].reverse().find((item) => item.source === "ticket_intake" && item.ticketDraft);
+  if (!previous) {
+    res.status(409).json({ error: "Start ticket creation before answering intake questions." });
+    return;
+  }
+  const duplicate = [...history].reverse().find(
+    (item) => item.source === "ticket_created" &&
+      item.ticketDraftId === previous.ticketDraft.idempotencyKey
+  );
+  if (duplicate) {
+    res.json({
+      sessionId,
+      intakeActive: false,
+      ticketCreated: true,
+      ticket: duplicate.ticket,
+      messages: [duplicate],
+      answer: duplicate.content
+    });
+    return;
+  }
+
+  const userMessage = sessions.addMessage(sessionId, {
+    role: "user",
+    content: answer,
+    timestamp: new Date().toISOString()
+  });
+  const state = advanceTicketIntake({ draft: previous.ticketDraft, answer });
+  if (!state.complete) {
+    const content = state.error ? `${state.error} ${state.answer}` : state.answer;
+    const assistantMessage = sessions.addMessage(sessionId, {
+      role: "assistant",
+      content,
+      source: "ticket_intake",
+      ticketDraft: state.draft,
+      timestamp: new Date().toISOString()
+    });
+    await sessions.save();
+    await saveSession(sessionId);
+    res.json({
+      sessionId,
+      intakeActive: true,
+      nextField: state.nextField,
+      messages: [userMessage, assistantMessage],
+      answer: content
+    });
+    return;
+  }
+
+  let profile = null;
+  if (bearerToken(req)) profile = await authService.requireRole(bearerToken(req), "user");
+  const ticket = await helpdeskStore.createTicket(state.draft, {
+    source: "ava",
+    requesterUserId: profile?.id || "",
+    actorUserId: profile?.id || ""
+  });
+  const content = `Your ticket ${ticket.id} is created. I marked it ${ticket.priority} priority with status ${ticket.status}. IT support can now follow it on the dashboard.`;
+  const assistantMessage = sessions.addMessage(sessionId, {
+    role: "assistant",
+    content,
+    source: "ticket_created",
+    ticketDraftId: state.draft.idempotencyKey,
+    ticket,
+    timestamp: new Date().toISOString()
+  });
+  await sessions.save();
+  await saveSession(sessionId);
+  res.status(201).json({
+    sessionId,
+    intakeActive: false,
+    ticketCreated: true,
+    ticket,
+    dashboard: await helpdeskStore.getDashboard(),
+    messages: [userMessage, assistantMessage],
+    answer: content
+  });
+}));
+
 app.get("/api/session/:sessionId", (req, res) => {
   hydrateSession(req.params.sessionId).then(() => {
   res.json({ messages: sessions.getMessages(req.params.sessionId) });
   });
+});
+
+app.post("/api/session/:sessionId/contact", async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const contact = validateHelpdeskContact(req.body || {});
+    if (!contact.valid) {
+      res.status(400).json({ error: contact.error });
+      return;
+    }
+
+    await hydrateSession(sessionId);
+    const messages = sessions.getMessages(sessionId);
+    if (!messages.length) {
+      res.status(404).json({ error: "This conversation is empty or has already ended." });
+      return;
+    }
+
+    const transcript = logger.formatTranscript({ sessionId, messages });
+    const fallbackSummary = buildHelpdeskSummary({ ...contact, messages });
+    const summary = hasUsableOpenAiKey()
+      ? await summarizeHelpdeskConversation({ ...contact, messages }).catch(() => fallbackSummary)
+      : fallbackSummary;
+    const draft = buildHelpdeskContactDraft({
+      ...contact,
+      summary,
+      transcript
+    });
+
+    if (shouldWriteLocalConversationLog({ isVercel })) {
+      await logger.endConversation({ sessionId, messages });
+    }
+    await saveConversationLog(sessionId, messages);
+    await sessions.clear(sessionId);
+    if (supabase) await supabase.deleteSession(sessionId);
+
+    res.json({
+      ok: true,
+      ...draft,
+      summary,
+      transcript,
+      transcriptFileName: `ava-helpdesk-${currentDateString()}-${sessionId.slice(0, 8)}.txt`,
+      archivedMessages: messages.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Unable to prepare the Helpdesk email." });
+  }
 });
 
 app.post("/api/session/:sessionId/end", async (req, res) => {
@@ -197,6 +456,86 @@ app.post("/api/admin/login", (req, res) => {
   }
   res.status(401).json({ error: "Invalid admin username or password." });
 });
+
+app.post("/api/auth/register-profile", asyncRoute(async (req, res) => {
+  const profile = await authService.authenticate(bearerToken(req));
+  const updated = await helpdeskStore.updateUser(profile.id, {
+    fullName: req.body?.fullName || profile.fullName,
+    department: req.body?.department ?? profile.department
+  });
+  res.json({ profile: updated });
+}));
+
+app.get("/api/admin/users", requireAdmin, asyncRoute(async (_req, res) => {
+  res.json({ users: await helpdeskStore.listUsers() });
+}));
+
+app.post("/api/admin/users", requireAdmin, asyncRoute(async (req, res) => {
+  const user = await helpdeskStore.createUser(req.body || {});
+  res.status(201).json({ user, users: await helpdeskStore.listUsers() });
+}));
+
+app.patch("/api/admin/users/:id", requireAdmin, asyncRoute(async (req, res) => {
+  const user = await helpdeskStore.updateUser(req.params.id, req.body || {});
+  res.json({ user, users: await helpdeskStore.listUsers() });
+}));
+
+app.post("/api/admin/users/:id/approve", requireAdmin, asyncRoute(async (req, res) => {
+  const user = await helpdeskStore.updateUser(req.params.id, {
+    approvalStatus: "approved",
+    approvedBy: req.profile.id
+  });
+  res.json({ user, users: await helpdeskStore.listUsers() });
+}));
+
+app.post("/api/admin/users/:id/reject", requireAdmin, asyncRoute(async (req, res) => {
+  const user = await helpdeskStore.updateUser(req.params.id, {
+    approvalStatus: "rejected",
+    approvedBy: req.profile.id
+  });
+  res.json({ user, users: await helpdeskStore.listUsers() });
+}));
+
+app.delete("/api/admin/users/:id", requireAdmin, asyncRoute(async (req, res) => {
+  const user = await helpdeskStore.deleteUser(req.params.id);
+  res.json({ user, users: await helpdeskStore.listUsers() });
+}));
+
+app.get("/api/admin/technicians", requireAdmin, asyncRoute(async (_req, res) => {
+  res.json({ technicians: await helpdeskStore.listTechnicians() });
+}));
+
+app.post("/api/admin/technicians", requireAdmin, asyncRoute(async (req, res) => {
+  const technician = await helpdeskStore.createTechnician(req.body || {}, req.profile.id);
+  res.status(201).json({ technician, technicians: await helpdeskStore.listTechnicians() });
+}));
+
+app.patch("/api/admin/technicians/:id", requireAdmin, asyncRoute(async (req, res) => {
+  const technician = await helpdeskStore.updateTechnician(req.params.id, req.body || {});
+  res.json({ technician, technicians: await helpdeskStore.listTechnicians() });
+}));
+
+app.delete("/api/admin/technicians/:id", requireAdmin, asyncRoute(async (req, res) => {
+  const technician = await helpdeskStore.deleteTechnician(req.params.id);
+  res.json({ technician, technicians: await helpdeskStore.listTechnicians() });
+}));
+
+app.post("/api/admin/change-password", requireAdmin, asyncRoute(async (req, res) => {
+  if (!supabaseAdmin) {
+    if (String(req.body?.currentPassword || "") !== adminPassword) {
+      res.status(400).json({ error: "Current password is incorrect." });
+      return;
+    }
+    const newPassword = String(req.body?.newPassword || "");
+    if (newPassword.length < 8) {
+      res.status(400).json({ error: "New password must contain at least 8 characters." });
+      return;
+    }
+    adminPassword = newPassword;
+  }
+  const profile = await helpdeskStore.updateUser(req.profile.id, { mustChangePassword: false });
+  res.json({ ok: true, profile });
+}));
 
 app.get("/api/admin/pdfs", requireAdmin, (_req, res) => {
   res.json({ maxPdfFiles, files: knowledgeBase.listDocuments() });
@@ -274,7 +613,7 @@ app.use((error, req, res, next) => {
     next(error);
     return;
   }
-  res.status(error.statusCode || 500).json({ error: uploadErrorMessage(error) });
+  res.status(error.status || error.statusCode || 500).json({ error: uploadErrorMessage(error) });
 });
 
 const distDir = path.join(projectRoot, "dist");
@@ -329,12 +668,28 @@ async function saveConversationLog(sessionId, messages) {
   });
 }
 
-function requireAdmin(req, res, next) {
-  if (req.headers.authorization === `Bearer ${adminToken}`) {
+async function requireAdmin(req, res, next) {
+  try {
+    req.profile = await authService.requireRole(bearerToken(req), "admin");
     next();
-    return;
+  } catch (error) {
+    res.status(error.status || 401).json({ error: error.message || "Admin login required." });
   }
-  res.status(401).json({ error: "Admin login required." });
+}
+
+async function requireApprovedUser(req, res, next) {
+  try {
+    req.profile = await authService.requireRole(bearerToken(req), "user");
+    next();
+  } catch (error) {
+    res.status(error.status || 401).json({ error: error.message || "Sign in required." });
+  }
+}
+
+function asyncRoute(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
 }
 
 function cleanupUploadedFiles(files) {
@@ -408,6 +763,28 @@ async function classifyHumanNameWithOpenAi(message) {
     decision: parsed?.decision,
     name: parsed?.name
   };
+}
+
+async function summarizeHelpdeskConversation({ name, email, messages }) {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const transcript = messages
+    .map((message) => `${message.role === "assistant" ? "Ava" : "User"}: ${message.content}`)
+    .join("\n");
+  const response = await client.responses.create({
+    model: getOpenAiModel(),
+    input: [
+      {
+        role: "system",
+        content:
+          "Summarize this unresolved IT helpdesk conversation for a human support technician. Include the reported issue, relevant device/software details, troubleshooting attempted, results, and the next action needed. Be factual, concise, and do not invent details."
+      },
+      {
+        role: "user",
+        content: `User: ${name}\nEmail: ${email}\n\nConversation:\n${transcript}`
+      }
+    ]
+  });
+  return response.output_text || buildHelpdeskSummary({ name, email, messages });
 }
 
 function parseJsonObject(value) {
