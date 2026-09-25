@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { createHelpdeskStore, toPublicDashboard } from "../src/server/helpdesk-store.js";
+import { createHelpdeskStore, shapeTicketCreationResponse, toPublicDashboard } from "../src/server/helpdesk-store.js";
 import { createAuthService } from "../src/server/auth-service.js";
 
 const validTicket = {
@@ -149,4 +149,19 @@ test("public dashboard removes requester and private ticket details", () => {
   });
   assert.equal(dashboard.technicians[0].email, undefined);
   assert.equal(dashboard.kpis.totalTickets, 1);
+});
+
+test("guest ticket creation response contains no global tickets or KPIs", () => {
+  const ticket = { id: "HD-0003", ...validTicket };
+  const response = shapeTicketCreationResponse(ticket);
+  assert.deepEqual(response, { ticket });
+  assert.equal(response.tickets, undefined);
+  assert.equal(response.kpis, undefined);
+});
+
+test("dashboard route is administrator-only", async () => {
+  const source = await readFile(path.join(process.cwd(), "src", "server", "server.js"), "utf8");
+  assert.match(source, /app\.get\("\/api\/admin\/dashboard", requireAdmin/);
+  assert.doesNotMatch(source, /app\.get\("\/api\/dashboard"/);
+  assert.doesNotMatch(source, /app\.get\("\/api\/tickets"/);
 });

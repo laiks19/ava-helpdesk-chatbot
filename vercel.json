@@ -26,5 +26,11 @@
       "src": "/(.*)",
       "dest": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/ai-news",
+      "schedule": "0 0 * * *"
+    }
   ]
 }

@@ -34,6 +34,10 @@ export function toPublicDashboard(dashboard = {}) {
   };
 }
 
+export function shapeTicketCreationResponse(ticket) {
+  return { ticket };
+}
+
 export function createHelpdeskStore({ supabase = null, localPaths = {}, isProduction = false } = {}) {
   if (isProduction && !supabase) {
     throw new Error("Supabase is required in production.");

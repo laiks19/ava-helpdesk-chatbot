@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { timingSafeEqual } from "node:crypto";
 
 export const AI_NEWS_SOURCES = Object.freeze([
   Object.freeze({
@@ -23,6 +24,18 @@ const parser = new XMLParser({
   trimValues: true,
   processEntities: false
 });
+
+export function authorizeCron(authorization, secret) {
+  const configured = String(secret || "");
+  if (!configured) return { ok: false, status: 500 };
+  const supplied = String(authorization || "");
+  const expected = `Bearer ${configured}`;
+  const suppliedBytes = Buffer.from(supplied);
+  const expectedBytes = Buffer.from(expected);
+  if (suppliedBytes.length !== expectedBytes.length) return { ok: false, status: 401 };
+  const ok = timingSafeEqual(suppliedBytes, expectedBytes);
+  return { ok, status: ok ? 200 : 401 };
+}
 
 export function isAllowedNewsUrl(value, source) {
   try {

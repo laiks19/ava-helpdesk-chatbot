@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   AI_NEWS_SOURCES,
+  authorizeCron,
   isAllowedNewsUrl,
   normalizeNewsItems,
   refreshAiNews
@@ -121,6 +122,21 @@ test("summarizer failure uses deterministic safe text", async () => {
   const item = (await store.list()).items[0];
   assert.match(item.summary, /practical model update/i);
   assert.match(item.recommendation, /MIS/i);
+});
+
+test("cron authorization requires an exact configured bearer secret", () => {
+  assert.deepEqual(authorizeCron("", "configured-secret"), { ok: false, status: 401 });
+  assert.deepEqual(authorizeCron("Bearer wrong-secret", "configured-secret"), { ok: false, status: 401 });
+  assert.deepEqual(authorizeCron("Bearer configured-secret", "configured-secret"), { ok: true, status: 200 });
+  assert.deepEqual(authorizeCron("Bearer anything", ""), { ok: false, status: 500 });
+});
+
+test("Vercel schedules the secured news refresh for 8 AM Malaysia time", async () => {
+  const config = JSON.parse(await readFile(path.join(process.cwd(), "vercel.json"), "utf8"));
+  assert.deepEqual(config.crons, [{ path: "/api/cron/ai-news", schedule: "0 0 * * *" }]);
+  const source = await readFile(path.join(process.cwd(), "src", "server", "server.js"), "utf8");
+  assert.match(source, /app\.get\("\/api\/cron\/ai-news", requireCronSecret/);
+  assert.match(source, /app\.get\("\/api\/ai-news"/);
 });
 
 function newsItem(source, title, url, publishedAt) {
