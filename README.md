@@ -18,8 +18,11 @@ Ava is an IT helpdesk portal with guest ticket submission, optional user account
 - Clears session memory after a conversation is ended.
 - Lets users register for approval and view tickets linked to their account.
 - Gives administrators full ticket, user, technician, PDF, and password controls.
+- Keeps the MIS KPI dashboard inside the administrator-only console.
 - Tracks Open, In Progress, and Closed work by technician.
 - Lets Ava collect ticket details conversationally and return a ticket number.
+- Publishes a cached briefing from official AI news sources on the public homepage.
+- Refreshes the AI briefing every day at 8:00 AM Malaysia time through Vercel Cron.
 - Adds tactile click effects to buttons.
 
 ## Tech Stack
@@ -52,6 +55,7 @@ Ava is an IT helpdesk portal with guest ticket submission, optional user account
    SUPABASE_URL=your_supabase_project_url
    SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
    SUPABASE_STORAGE_BUCKET=helpdesk-pdfs
+   CRON_SECRET=replace_with_a_long_random_secret
    ```
 
    `.env.local` is ignored by Git and overrides `.env` when the server starts.
@@ -134,6 +138,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o
 AVA_ADMIN_USERNAME=kokseng.lai@ecoworld.my
 AVA_ADMIN_PASSWORD=admin123
+CRON_SECRET=replace_with_a_long_random_secret
 ```
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY` or `OPENAI_API_KEY` with a `VITE_` prefix. Only the Supabase publishable key belongs in the browser.
@@ -144,7 +149,18 @@ Bootstrap the first administrator after applying migrations:
 npm run bootstrap-admin
 ```
 
-For Vercel, import the GitHub repository, keep `npm run build` as the build command, and add the same variables for Production and Preview. Deploy after the migrations and bootstrap finish. Supabase stores production tickets, users, technicians, PDFs, active sessions, and conversation logs. Local development intentionally uses JSON ticket data so it can run before a remote migration is applied.
+For Vercel, import the GitHub repository, keep `npm run build` as the build command, and add the same variables for Production and Preview. `vercel.json` calls `/api/cron/ai-news` at `00:00 UTC`, which is 8:00 AM in Malaysia. Vercel sends `CRON_SECRET` to the protected refresh route. Deploy after the migrations and bootstrap finish.
+
+Supabase stores production tickets, users, technicians, PDFs, active sessions, conversation logs, and cached AI news. The news refresh reads only allowlisted official feeds, converts feed metadata to plain text, and uses the existing server-side OpenAI key for concise summaries. The public homepage reads cached rows and never receives either the OpenAI key or the Supabase service-role key. Local development intentionally uses JSON data so it can run before a remote migration is applied.
+
+Access is role-aware: the public page shows ticket submission, Ava, optional account login, and AI news; approved users also see **My Tickets**; administrators additionally see **Admin Console**, where **MIS Dashboard** is the first tab.
+
+To seed or retry the production news cache manually, use the configured environment secret without putting it in command history as a literal:
+
+```powershell
+Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:CRON_SECRET" } `
+  -Uri "https://YOUR_DEPLOYMENT/api/cron/ai-news"
+```
 
 ## Testing
 
