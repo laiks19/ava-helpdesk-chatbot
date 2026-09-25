@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   createSupabaseRestClient,
@@ -9,6 +13,8 @@ import {
   getSupabaseSessionSafely,
   saveSupabaseSessionSafely
 } from "../src/server/supabase-store.js";
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("Supabase config stays disabled until URL and service role key are configured", () => {
   assert.equal(isSupabaseConfigured({}), false);
@@ -137,4 +143,53 @@ test("Supabase session persistence failures do not block chat replies", async ()
 
   assert.deepEqual(await getSupabaseSessionSafely(client, "tab-a"), []);
   await assert.doesNotReject(() => saveSupabaseSessionSafely(client, "tab-a", []));
+});
+
+test("helpdesk migration creates protected account and ticket tables", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  assert.equal(existsSync(migrationsDir), true, "Supabase migrations directory is missing");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_helpdesk_accounts_and_ticketing.sql")
+  );
+  assert.ok(migrationName, "helpdesk account migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+
+  for (const table of ["profiles", "technicians", "tickets", "ticket_activity"]) {
+    assert.match(sql, new RegExp(`create table public\\.${table}`, "i"));
+    assert.match(sql, new RegExp(`alter table public\\.${table} enable row level security`, "i"));
+  }
+
+  assert.match(sql, /approval_status/i);
+  assert.match(sql, /must_change_password/i);
+  assert.match(sql, /assigned_technician_id/i);
+  assert.match(sql, /deleted_at/i);
+  assert.match(sql, /create index/i);
+  assert.match(sql, /revoke all/i);
+});
+
+test("browser Supabase client uses only publishable environment values", async () => {
+  const clientPath = path.join(projectRoot, "src", "client", "supabase-client.js");
+  assert.equal(existsSync(clientPath), true, "browser Supabase client is missing");
+  const source = await readFile(clientPath, "utf8");
+
+  assert.match(source, /VITE_SUPABASE_URL/);
+  assert.match(source, /VITE_SUPABASE_PUBLISHABLE_KEY/);
+  assert.doesNotMatch(source, /SERVICE_ROLE/);
+});
+
+test("server Supabase admin and bootstrap keep privileged keys server-side", async () => {
+  const adminPath = path.join(projectRoot, "src", "server", "supabase-admin.js");
+  const bootstrapPath = path.join(projectRoot, "scripts", "bootstrap-admin.js");
+  assert.equal(existsSync(adminPath), true, "server Supabase admin client is missing");
+  assert.equal(existsSync(bootstrapPath), true, "administrator bootstrap script is missing");
+  const [adminSource, bootstrapSource] = await Promise.all([
+    readFile(adminPath, "utf8"),
+    readFile(bootstrapPath, "utf8")
+  ]);
+
+  assert.match(adminSource, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(bootstrapSource, /kokseng\.lai@ecoworld\.my/);
+  assert.match(bootstrapSource, /admin123/);
+  assert.match(bootstrapSource, /must_change_password/);
+  assert.doesNotMatch(bootstrapSource, /console\.log\([^)]*admin123/);
 });

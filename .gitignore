@@ -17,3 +17,4 @@ helpdesklog/*.md
 data/
 .vercel/
 .superpowers/
+supabase/.temp/
