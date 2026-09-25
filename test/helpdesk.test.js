@@ -8,6 +8,10 @@ import {
   createSessionStore,
   createKnowledgeBase,
   createConversationLogger,
+  buildHelpdeskContactDraft,
+  buildHelpdeskSummary,
+  validateHelpdeskContact,
+  wantsHelpdeskContact,
   getOpenAiModel,
   getAdminPassword,
   createUploadedPdfDocument,
@@ -18,6 +22,17 @@ import {
   repeatedUnsolvedCount,
   resolveNameIntake,
   validateAdminCredentials,
+  validateTicketInput,
+  validateProfileInput,
+  validateTechnicianInput,
+  createHelpdeskTicket,
+  updateHelpdeskTicket,
+  deleteHelpdeskTicket,
+  formatTicketNumber,
+  summarizeTicketKpis,
+  summarizeTechnicianKpis,
+  startTicketIntake,
+  advanceTicketIntake,
   shouldWriteLocalConversationLog,
   resolveHelpdeskAnswer
 } from "../src/server/helpdesk-core.js";
@@ -169,7 +184,7 @@ test("Ava treats unresolved follow-up text as part of the previous IT issue", as
     }
   });
 
-  assert.equal(answer.source, "openai");
+  assert.equal(answer.source, "helpdesk_offer");
   assert.match(responderMessage, /Printer cannot print/i);
   assert.match(responderMessage, /try all, still same/i);
 });
@@ -339,14 +354,16 @@ test("published Sites frontend points API calls to the local Ava server", () => 
   assert.match(connectionErrorMessage(), /npm run server/);
 });
 
-test("chat page keeps only the conversation interface", async () => {
+test("app shell exposes ticket submission, Ava, MIS dashboard, and admin navigation", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
-  const chatPage = source.match(/function ChatPage\(\) \{[\s\S]*?\nfunction Header\(\)/)?.[0] || "";
 
-  assert.doesNotMatch(chatPage, /status-rail/);
-  assert.doesNotMatch(chatPage, /quiet-panel/);
-  assert.doesNotMatch(chatPage, /<Header \/>/);
-  assert.match(chatPage, /chat-panel/);
+  assert.match(source, /Submit Ticket/);
+  assert.match(source, /Ask Ava/);
+  assert.match(source, /MIS Dashboard/);
+  assert.match(source, /Admin/);
+  assert.match(source, /TicketSubmission/);
+  assert.match(source, /Dashboard/);
+  assert.match(source, /ChatPage/);
 });
 
 test("chat page does not show local PDF searching text or source labels", async () => {
@@ -410,7 +427,7 @@ test("admin password placeholder falls back to admin123", () => {
 
 test("Admin page does not persist login across refreshes", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
-  const adminPage = source.match(/function AdminPage\(\) \{[\s\S]*?\nfunction formatBytes/)?.[0] || "";
+  const adminPage = source.match(/function AdminPage\(\{ tickets, onTicketUpdate \}\) \{[\s\S]*?\nfunction AdminTicketBoard/)?.[0] || "";
 
   assert.doesNotMatch(adminPage, /localStorage/);
   assert.match(adminPage, /useState\(""\)/);
@@ -441,4 +458,329 @@ test("OpenAI system prompt tells Ava to handle follow-up messages as the same su
 test("Vercel deployments do not write local conversation log files", () => {
   assert.equal(shouldWriteLocalConversationLog({ isVercel: true }), false);
   assert.equal(shouldWriteLocalConversationLog({ isVercel: false }), true);
+});
+
+test("helpdesk contact requires a name and valid email address", () => {
+  assert.deepEqual(validateHelpdeskContact({ name: "", email: "bad" }), {
+    valid: false,
+    error: "Enter your name and a valid email address."
+  });
+  assert.deepEqual(validateHelpdeskContact({ name: "  Mei Lin  ", email: " mei@example.com " }), {
+    valid: true,
+    name: "Mei Lin",
+    email: "mei@example.com"
+  });
+});
+
+test("helpdesk ticket submission validates the required simple fields", () => {
+  assert.deepEqual(validateTicketInput({ requesterName: "", email: "bad" }), {
+    valid: false,
+    error: "Enter requester name, valid email, category, priority, subject, and description."
+  });
+
+  assert.deepEqual(
+    validateTicketInput({
+      requesterName: "  Mei Lin  ",
+      email: " MEI@example.com ",
+      category: " Hardware ",
+      priority: "Medium",
+      subject: " Laptop not turning on ",
+      description: " Power light blinks but screen stays black. "
+    }),
+    {
+      valid: true,
+      ticket: {
+        requesterName: "Mei Lin",
+        email: "mei@example.com",
+        department: "",
+        category: "Hardware",
+        priority: "Medium",
+        subject: "Laptop not turning on",
+        description: "Power light blinks but screen stays black.",
+        asset: "",
+        location: ""
+      }
+    }
+  );
+});
+
+test("helpdesk tickets get a readable id, lifecycle fields, and close timestamps", () => {
+  const ticket = createHelpdeskTicket({
+    sequence: 42,
+    now: new Date("2026-09-24T03:15:00.000Z"),
+    input: {
+      requesterName: "Mei Lin",
+      email: "mei@example.com",
+      department: "Finance",
+      category: "Hardware",
+      priority: "High",
+      subject: "Laptop not turning on",
+      description: "Screen is black",
+      asset: "Dell Laptop",
+      location: "Head Office"
+    }
+  });
+
+  assert.equal(ticket.id, "HD-0042");
+  assert.equal(ticket.status, "Open");
+  assert.equal(ticket.createdAt, "2026-09-24T03:15:00.000Z");
+  assert.equal(ticket.closedAt, "");
+  assert.equal(ticket.slaHours, 8);
+});
+
+test("ticket KPI summary counts open, closed, SLA, priority, and status mix", () => {
+  const tickets = [
+    {
+      id: "HD-0001",
+      priority: "Critical",
+      status: "Open",
+      createdAt: "2026-09-24T00:00:00.000Z",
+      closedAt: "",
+      slaHours: 4
+    },
+    {
+      id: "HD-0002",
+      priority: "Medium",
+      status: "Resolved",
+      createdAt: "2026-09-23T23:00:00.000Z",
+      closedAt: "2026-09-24T01:00:00.000Z",
+      slaHours: 24
+    },
+    {
+      id: "HD-0003",
+      priority: "High",
+      status: "Closed",
+      createdAt: "2026-09-23T00:00:00.000Z",
+      closedAt: "2026-09-24T12:00:00.000Z",
+      slaHours: 8
+    }
+  ];
+
+  const summary = summarizeTicketKpis({
+    tickets,
+    now: new Date("2026-09-24T13:00:00.000Z")
+  });
+
+  assert.equal(summary.totalTickets, 3);
+  assert.equal(summary.openTickets, 1);
+  assert.equal(summary.closedToday, 2);
+  assert.equal(summary.slaMetPercent, 50);
+  assert.equal(summary.averageResolutionHours, 19);
+  assert.deepEqual(summary.byPriority, { Critical: 1, High: 1, Medium: 1, Low: 0 });
+  assert.deepEqual(summary.byStatus, { Open: 1, "In Progress": 0, "Waiting on User": 0, "On Hold": 0, Resolved: 1, Closed: 1 });
+});
+
+test("profile and technician input normalize access and assignment data", () => {
+  assert.deepEqual(validateProfileInput({
+    fullName: "  Mei Lin  ",
+    email: " MEI@example.com ",
+    department: " Finance ",
+    role: "ADMIN",
+    approvalStatus: "APPROVED"
+  }), {
+    valid: true,
+    profile: {
+      fullName: "Mei Lin",
+      email: "mei@example.com",
+      department: "Finance",
+      role: "admin",
+      approvalStatus: "approved",
+      isActive: true
+    }
+  });
+
+  assert.deepEqual(validateTechnicianInput({ name: " Alex Tan ", email: " ALEX@example.com " }), {
+    valid: true,
+    technician: { name: "Alex Tan", email: "alex@example.com", isActive: true }
+  });
+  assert.equal(validateTechnicianInput({ name: "", email: "bad" }).valid, false);
+});
+
+test("ticket lifecycle supports assignment reopening and soft deletion", () => {
+  const created = createHelpdeskTicket({
+    sequence: 8,
+    now: new Date("2026-09-25T01:00:00.000Z"),
+    source: "admin",
+    requesterUserId: "user-1",
+    input: {
+      requesterName: "Mei Lin",
+      email: "mei@example.com",
+      category: "Hardware",
+      priority: "High",
+      subject: "Laptop screen is black",
+      description: "The screen remains black after restart."
+    }
+  });
+  const closed = updateHelpdeskTicket(created, {
+    status: "Closed",
+    assignedTechnicianId: "tech-1",
+    assignedTo: "Alex Tan",
+    resolutionNote: "Replaced display cable."
+  }, new Date("2026-09-25T03:00:00.000Z"));
+  const reopened = updateHelpdeskTicket(closed, { status: "In Progress" }, new Date("2026-09-25T04:00:00.000Z"));
+  const deleted = deleteHelpdeskTicket(reopened, { actorUserId: "admin-1" }, new Date("2026-09-25T05:00:00.000Z"));
+
+  assert.equal(formatTicketNumber(8), "HD-0008");
+  assert.equal(created.source, "admin");
+  assert.equal(created.requesterUserId, "user-1");
+  assert.equal(closed.closedAt, "2026-09-25T03:00:00.000Z");
+  assert.equal(reopened.closedAt, "");
+  assert.equal(deleted.deletedAt, "2026-09-25T05:00:00.000Z");
+  assert.equal(deleted.deletedBy, "admin-1");
+});
+
+test("technician KPI groups open in-progress and closed tickets by assignee", () => {
+  const result = summarizeTechnicianKpis({
+    technicians: [
+      { id: "tech-1", name: "Alex Tan", isActive: true },
+      { id: "tech-2", name: "Nadia Lee", isActive: true }
+    ],
+    tickets: [
+      { status: "Open", assignedTechnicianId: "tech-1" },
+      { status: "In Progress", assignedTechnicianId: "tech-1" },
+      { status: "Resolved", assignedTechnicianId: "tech-1" },
+      { status: "Closed", assignedTechnicianId: "tech-1" },
+      { status: "Open", assignedTechnicianId: "" },
+      { status: "Closed", assignedTechnicianId: "tech-2", deletedAt: "2026-09-25T01:00:00.000Z" }
+    ]
+  });
+
+  assert.deepEqual(result[0], {
+    technicianId: "tech-1",
+    name: "Alex Tan",
+    open: 1,
+    inProgress: 1,
+    closed: 2,
+    total: 4,
+    completionPercent: 50
+  });
+  assert.equal(result.find((item) => item.technicianId === "unassigned").open, 1);
+  assert.equal(result.find((item) => item.technicianId === "tech-2").total, 0);
+});
+
+test("Ava ticket intake asks for missing details and completes after optional skips", () => {
+  let state = startTicketIntake({
+    profile: null,
+    messages: [
+      { role: "assistant", profileName: "Mei Lin", content: "Nice to meet you." },
+      { role: "user", content: "My laptop screen stays black after restart." }
+    ]
+  });
+
+  assert.equal(state.nextField, "email");
+  state = advanceTicketIntake({ draft: state.draft, answer: "not-an-email" });
+  assert.equal(state.nextField, "email");
+  assert.match(state.error, /valid email/i);
+  state = advanceTicketIntake({ draft: state.draft, answer: "mei@example.com" });
+  assert.equal(state.nextField, "department");
+  state = advanceTicketIntake({ draft: state.draft, answer: "skip" });
+  assert.equal(state.nextField, "category");
+  state = advanceTicketIntake({ draft: state.draft, answer: "Hardware" });
+  assert.equal(state.nextField, "priority");
+  state = advanceTicketIntake({ draft: state.draft, answer: "High" });
+  state = advanceTicketIntake({ draft: state.draft, answer: "skip" });
+  state = advanceTicketIntake({ draft: state.draft, answer: "Head Office" });
+
+  assert.equal(state.complete, true);
+  assert.equal(state.draft.email, "mei@example.com");
+  assert.equal(state.draft.category, "Hardware");
+  assert.equal(state.draft.priority, "High");
+  assert.match(state.draft.description, /laptop screen/i);
+  assert.ok(state.draft.idempotencyKey);
+});
+
+test("helpdesk email draft addresses both recipients and includes the case details", () => {
+  const draft = buildHelpdeskContactDraft({
+    name: "Mei Lin",
+    email: "mei@example.com",
+    summary: "Printer remains offline after restarting the spooler.",
+    transcript: "User: Printer is offline\nAva: Restart the spooler."
+  });
+
+  assert.match(draft.mailtoUrl, /^mailto:helpdesk_mis_north%40ecoworld\.my,kokseng\.lai%40ecoworld\.my\?/);
+  assert.match(decodeURIComponent(draft.mailtoUrl), /Mei Lin/);
+  assert.match(decodeURIComponent(draft.mailtoUrl), /mei@example\.com/);
+  assert.match(decodeURIComponent(draft.mailtoUrl), /Printer remains offline/);
+  assert.match(decodeURIComponent(draft.mailtoUrl), /User: Printer is offline/);
+  assert.equal(draft.transcriptNeedsAttachment, false);
+});
+
+test("long transcripts are supplied as a download instead of overflowing the email link", () => {
+  const draft = buildHelpdeskContactDraft({
+    name: "Mei Lin",
+    email: "mei@example.com",
+    summary: "VPN remains unavailable.",
+    transcript: `User: ${"VPN failed. ".repeat(400)}`
+  });
+
+  assert.equal(draft.transcriptNeedsAttachment, true);
+  assert.doesNotMatch(decodeURIComponent(draft.mailtoUrl), /VPN failed\. VPN failed\. VPN failed/);
+  assert.match(decodeURIComponent(draft.mailtoUrl), /attach the downloaded transcript/i);
+});
+
+test("Ava recognizes agreement immediately after offering Helpdesk escalation", () => {
+  const history = [
+    { role: "user", content: "The printer still does not work" },
+    {
+      role: "assistant",
+      source: "helpdesk_offer",
+      content: "Would you like me to prepare this for IT Helpdesk?"
+    }
+  ];
+
+  assert.equal(wantsHelpdeskContact("yes please", history), true);
+  assert.equal(wantsHelpdeskContact("no", history), false);
+  assert.equal(wantsHelpdeskContact("yes", [{ role: "assistant", source: "openai", content: "Try again" }]), false);
+});
+
+test("Ava offers Helpdesk escalation when troubleshooting remains unresolved", async () => {
+  const answer = await resolveHelpdeskAnswer({
+    message: "still not working",
+    history: [
+      { role: "user", content: "Printer cannot print" },
+      { role: "assistant", content: "Restart the print spooler and try again." }
+    ],
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async () => "Please check whether the printer shows an error code."
+  });
+
+  assert.equal(answer.source, "helpdesk_offer");
+  assert.match(answer.answer, /printer shows an error code/i);
+  assert.match(answer.answer, /contact Helpdesk/i);
+  assert.match(answer.answer, /yes/i);
+});
+
+test("fallback helpdesk summary records the user, issue, and transcript", () => {
+  const summary = buildHelpdeskSummary({
+    name: "Mei Lin",
+    email: "mei@example.com",
+    messages: [
+      { role: "user", content: "Printer is offline" },
+      { role: "assistant", content: "Restart the print spooler" },
+      { role: "user", content: "Still not working" }
+    ]
+  });
+
+  assert.match(summary, /Mei Lin/);
+  assert.match(summary, /mei@example\.com/);
+  assert.match(summary, /Printer is offline/);
+  assert.match(summary, /Restart the print spooler/);
+  assert.match(summary, /Still not working/);
+});
+
+test("fallback helpdesk summary stays concise for a long conversation", () => {
+  const messages = Array.from({ length: 80 }, (_, index) => ({
+    role: index % 2 ? "assistant" : "user",
+    content: `${index}: ${"diagnostic detail ".repeat(30)}`
+  }));
+
+  const summary = buildHelpdeskSummary({
+    name: "Mei Lin",
+    email: "mei@example.com",
+    messages
+  });
+
+  assert.ok(summary.length < 3000);
+  assert.match(summary, /0: diagnostic detail/);
+  assert.match(summary, /79: diagnostic detail/);
 });

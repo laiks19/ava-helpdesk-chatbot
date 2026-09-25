@@ -1,4 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 export function currentDateString(now = new Date()) {
@@ -31,6 +32,420 @@ export function validateAdminCredentials({
 
 export function shouldWriteLocalConversationLog({ isVercel }) {
   return !isVercel;
+}
+
+const helpdeskRecipients = [
+  "helpdesk_mis_north@ecoworld.my",
+  "kokseng.lai@ecoworld.my"
+];
+
+export function validateHelpdeskContact({ name, email }) {
+  const cleanedName = String(name || "").trim();
+  const cleanedEmail = String(email || "").trim().toLowerCase();
+  const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedEmail);
+
+  if (!cleanedName || !emailIsValid) {
+    return { valid: false, error: "Enter your name and a valid email address." };
+  }
+
+  return { valid: true, name: cleanedName, email: cleanedEmail };
+}
+
+const ticketPriorities = ["Critical", "High", "Medium", "Low"];
+const ticketStatuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
+const ticketCategories = ["Hardware", "Software", "Network", "Email", "Account Access", "Printer", "Security", "Other"];
+const prioritySlaHours = {
+  Critical: 4,
+  High: 8,
+  Medium: 24,
+  Low: 48
+};
+
+function cleanTicketText(value, limit = 500) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, limit);
+}
+
+function cleanEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeTicketChoice(value, allowed, fallback = "") {
+  const text = cleanTicketText(value, 80);
+  return allowed.find((item) => item.toLowerCase() === text.toLowerCase()) || fallback;
+}
+
+export function validateProfileInput(input = {}) {
+  const profile = {
+    fullName: cleanTicketText(input.fullName || input.full_name, 120),
+    email: cleanEmail(input.email),
+    department: cleanTicketText(input.department, 120),
+    role: String(input.role || "user").trim().toLowerCase(),
+    approvalStatus: String(input.approvalStatus || input.approval_status || "pending").trim().toLowerCase(),
+    isActive: input.isActive !== false && input.is_active !== false
+  };
+  const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email);
+  if (
+    !profile.fullName ||
+    !emailIsValid ||
+    !["admin", "user"].includes(profile.role) ||
+    !["pending", "approved", "rejected"].includes(profile.approvalStatus)
+  ) {
+    return { valid: false, error: "Enter a name, valid email, role, and approval status." };
+  }
+  return { valid: true, profile };
+}
+
+export function validateTechnicianInput(input = {}) {
+  const technician = {
+    name: cleanTicketText(input.name, 120),
+    email: cleanEmail(input.email),
+    isActive: input.isActive !== false && input.is_active !== false
+  };
+  const emailIsValid = !technician.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(technician.email);
+  if (!technician.name || !emailIsValid) {
+    return { valid: false, error: "Enter a technician name and a valid optional email address." };
+  }
+  return { valid: true, technician };
+}
+
+export function formatTicketNumber(sequence) {
+  return `HD-${String(Number(sequence) || 0).padStart(4, "0")}`;
+}
+
+export function validateTicketInput(input = {}) {
+  const ticket = {
+    requesterName: cleanTicketText(input.requesterName || input.name, 120),
+    email: cleanEmail(input.email),
+    department: cleanTicketText(input.department, 120),
+    category: cleanTicketText(input.category, 80),
+    priority: normalizeTicketChoice(input.priority, ticketPriorities, cleanTicketText(input.priority, 40)),
+    subject: cleanTicketText(input.subject, 180),
+    description: cleanTicketText(input.description, 2000),
+    asset: cleanTicketText(input.asset || input.device, 120),
+    location: cleanTicketText(input.location, 160)
+  };
+  const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ticket.email);
+
+  if (
+    !ticket.requesterName ||
+    !emailIsValid ||
+    !ticket.category ||
+    !ticket.priority ||
+    !ticket.subject ||
+    !ticket.description
+  ) {
+    return {
+      valid: false,
+      error: "Enter requester name, valid email, category, priority, subject, and description."
+    };
+  }
+
+  return { valid: true, ticket };
+}
+
+export function createHelpdeskTicket({
+  input,
+  sequence = 1,
+  now = new Date(),
+  source = "form",
+  requesterUserId = ""
+}) {
+  const validation = validateTicketInput(input);
+  if (!validation.valid) {
+    throw new Error(validation.error);
+  }
+  const ticket = validation.ticket;
+  const priority = normalizeTicketChoice(ticket.priority, ticketPriorities, "Medium");
+
+  return {
+    id: formatTicketNumber(sequence),
+    ticketNumber: Number(sequence),
+    ...ticket,
+    priority,
+    status: "Open",
+    source: ["form", "ava", "admin"].includes(source) ? source : "form",
+    requesterUserId: cleanTicketText(requesterUserId, 80),
+    assignedTechnicianId: "",
+    assignedTo: "",
+    resolutionNote: "",
+    slaHours: prioritySlaHours[priority] || prioritySlaHours.Medium,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    closedAt: "",
+    deletedAt: "",
+    deletedBy: ""
+  };
+}
+
+export function updateHelpdeskTicket(ticket, updates = {}, now = new Date()) {
+  const nextStatus = normalizeTicketChoice(updates.status, ticketStatuses, ticket.status);
+  const priority = normalizeTicketChoice(updates.priority, ticketPriorities, ticket.priority);
+  const closedAt = ["Resolved", "Closed"].includes(nextStatus)
+    ? ticket.closedAt || now.toISOString()
+    : "";
+
+  return {
+    ...ticket,
+    requesterName: cleanTicketText(updates.requesterName ?? ticket.requesterName, 120),
+    email: cleanEmail(updates.email ?? ticket.email),
+    department: cleanTicketText(updates.department ?? ticket.department, 120),
+    category: cleanTicketText(updates.category ?? ticket.category, 80),
+    priority,
+    subject: cleanTicketText(updates.subject ?? ticket.subject, 180),
+    description: cleanTicketText(updates.description ?? ticket.description, 2000),
+    asset: cleanTicketText(updates.asset ?? ticket.asset, 120),
+    location: cleanTicketText(updates.location ?? ticket.location, 160),
+    status: nextStatus,
+    assignedTechnicianId: cleanTicketText(
+      updates.assignedTechnicianId ?? ticket.assignedTechnicianId,
+      80
+    ),
+    assignedTo: cleanTicketText(updates.assignedTo ?? ticket.assignedTo, 120),
+    resolutionNote: cleanTicketText(updates.resolutionNote ?? ticket.resolutionNote, 1000),
+    slaHours: prioritySlaHours[priority] || ticket.slaHours || prioritySlaHours.Medium,
+    updatedAt: now.toISOString(),
+    closedAt
+  };
+}
+
+export function deleteHelpdeskTicket(ticket, { actorUserId = "" } = {}, now = new Date()) {
+  return {
+    ...ticket,
+    deletedAt: now.toISOString(),
+    deletedBy: cleanTicketText(actorUserId, 80),
+    updatedAt: now.toISOString()
+  };
+}
+
+export function summarizeTicketKpis({ tickets = [], now = new Date() } = {}) {
+  const activeTickets = tickets.filter((ticket) => !ticket.deletedAt);
+  const today = currentDateString(now);
+  const byPriority = Object.fromEntries(ticketPriorities.map((priority) => [priority, 0]));
+  const byStatus = Object.fromEntries(ticketStatuses.map((status) => [status, 0]));
+  let closedToday = 0;
+  let slaEligible = 0;
+  let slaMet = 0;
+  let resolutionHoursTotal = 0;
+  let resolvedCount = 0;
+
+  for (const ticket of activeTickets) {
+    if (byPriority[ticket.priority] !== undefined) byPriority[ticket.priority] += 1;
+    if (byStatus[ticket.status] !== undefined) byStatus[ticket.status] += 1;
+    if (ticket.closedAt && currentDateString(new Date(ticket.closedAt)) === today) closedToday += 1;
+    if (ticket.closedAt) {
+      const hours = (new Date(ticket.closedAt).getTime() - new Date(ticket.createdAt).getTime()) / 36e5;
+      if (Number.isFinite(hours) && hours >= 0) {
+        resolvedCount += 1;
+        resolutionHoursTotal += hours;
+        slaEligible += 1;
+        if (hours <= (ticket.slaHours || prioritySlaHours.Medium)) slaMet += 1;
+      }
+    }
+  }
+
+  const closedStatuses = new Set(["Resolved", "Closed"]);
+  const openTickets = activeTickets.filter((ticket) => !closedStatuses.has(ticket.status)).length;
+
+  return {
+    totalTickets: activeTickets.length,
+    openTickets,
+    closedToday,
+    averageResolutionHours: resolvedCount ? Math.round(resolutionHoursTotal / resolvedCount) : 0,
+    slaMetPercent: slaEligible ? Math.round((slaMet / slaEligible) * 100) : 100,
+    byPriority,
+    byStatus
+  };
+}
+
+export function summarizeTechnicianKpis({ tickets = [], technicians = [] } = {}) {
+  const rows = new Map(
+    technicians.map((technician) => [
+      technician.id,
+      {
+        technicianId: technician.id,
+        name: technician.name,
+        open: 0,
+        inProgress: 0,
+        closed: 0,
+        total: 0,
+        completionPercent: 0
+      }
+    ])
+  );
+  rows.set("unassigned", {
+    technicianId: "unassigned",
+    name: "Unassigned",
+    open: 0,
+    inProgress: 0,
+    closed: 0,
+    total: 0,
+    completionPercent: 0
+  });
+
+  for (const ticket of tickets) {
+    if (ticket.deletedAt) continue;
+    const key = ticket.assignedTechnicianId || "unassigned";
+    if (!rows.has(key)) {
+      rows.set(key, {
+        technicianId: key,
+        name: ticket.assignedTo || "Inactive technician",
+        open: 0,
+        inProgress: 0,
+        closed: 0,
+        total: 0,
+        completionPercent: 0
+      });
+    }
+    const row = rows.get(key);
+    row.total += 1;
+    if (["Resolved", "Closed"].includes(ticket.status)) row.closed += 1;
+    else if (ticket.status === "In Progress") row.inProgress += 1;
+    else row.open += 1;
+  }
+
+  return [...rows.values()].map((row) => ({
+    ...row,
+    completionPercent: row.total ? Math.round((row.closed / row.total) * 100) : 0
+  }));
+}
+
+const ticketIntakeFields = [
+  "requesterName",
+  "email",
+  "department",
+  "category",
+  "priority",
+  "asset",
+  "location",
+  "subject",
+  "description"
+];
+const optionalTicketIntakeFields = new Set(["department", "asset", "location"]);
+const ticketIntakeQuestions = {
+  requesterName: "What name should I put on the ticket?",
+  email: "What email address should IT use to contact you?",
+  department: "Which department are you in? You can type skip if it is not applicable.",
+  category: `Which category fits best: ${ticketCategories.join(", ")}?`,
+  priority: "How urgent is this: Critical, High, Medium, or Low?",
+  asset: "Which device or asset is affected? You can type skip.",
+  location: "Where are you located? You can type skip.",
+  subject: "What short title should I use for this ticket?",
+  description: "Please describe the problem and what you have already tried."
+};
+
+function ticketIntakeNextField(draft) {
+  const skipped = new Set(draft.skippedFields || []);
+  return ticketIntakeFields.find((field) => !draft[field] && !skipped.has(field)) || "";
+}
+
+function ticketIntakeResult(draft, error = "") {
+  const nextField = ticketIntakeNextField(draft);
+  return {
+    complete: !nextField,
+    draft: { ...draft, nextField },
+    nextField,
+    answer: nextField
+      ? ticketIntakeQuestions[nextField]
+      : "Thanks, I have everything I need and I’m creating your ticket now.",
+    error
+  };
+}
+
+export function startTicketIntake({ messages = [], profile = null } = {}) {
+  const profileName = profile?.fullName || profile?.full_name || getCapturedName(messages);
+  const issue = [...messages]
+    .reverse()
+    .find((item) => item.role === "user" && isItSupportQuestion(item.content))?.content || "";
+  const draft = {
+    requesterName: cleanTicketText(profileName, 120),
+    email: cleanEmail(profile?.email),
+    department: cleanTicketText(profile?.department, 120),
+    category: "",
+    priority: "",
+    asset: "",
+    location: "",
+    subject: cleanTicketText(issue, 80),
+    description: cleanTicketText(issue, 2000),
+    skippedFields: [],
+    idempotencyKey: randomUUID()
+  };
+  return ticketIntakeResult(draft);
+}
+
+export function advanceTicketIntake({ draft = {}, answer = "" } = {}) {
+  const nextField = draft.nextField || ticketIntakeNextField(draft);
+  if (!nextField) return ticketIntakeResult(draft);
+  const value = cleanTicketText(answer, nextField === "description" ? 2000 : 180);
+  const nextDraft = {
+    ...draft,
+    skippedFields: [...(draft.skippedFields || [])]
+  };
+
+  if (optionalTicketIntakeFields.has(nextField) && /^skip$/i.test(value)) {
+    nextDraft[nextField] = "";
+    nextDraft.skippedFields = [...new Set([...nextDraft.skippedFields, nextField])];
+    return ticketIntakeResult(nextDraft);
+  }
+  if (!value) {
+    return ticketIntakeResult(nextDraft, "Please enter a value so I can continue.");
+  }
+  if (nextField === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail(value))) {
+    return ticketIntakeResult(nextDraft, "Please enter a valid email address.");
+  }
+  if (nextField === "category") {
+    const category = normalizeTicketChoice(value, ticketCategories);
+    if (!category) return ticketIntakeResult(nextDraft, `Choose one of: ${ticketCategories.join(", ")}.`);
+    nextDraft.category = category;
+    return ticketIntakeResult(nextDraft);
+  }
+  if (nextField === "priority") {
+    const priority = normalizeTicketChoice(value, ticketPriorities);
+    if (!priority) return ticketIntakeResult(nextDraft, "Choose Critical, High, Medium, or Low.");
+    nextDraft.priority = priority;
+    return ticketIntakeResult(nextDraft);
+  }
+
+  nextDraft[nextField] = nextField === "email" ? cleanEmail(value) : value;
+  return ticketIntakeResult(nextDraft);
+}
+
+export function buildHelpdeskSummary({ name, email, messages = [] }) {
+  const selectedMessages = messages.length <= 8
+    ? messages
+    : [...messages.slice(0, 2), ...messages.slice(-4)];
+  const transcriptLines = selectedMessages.map((message) => {
+    const speaker = message.role === "assistant" ? "Ava" : "User";
+    const content = String(message.content || "").slice(0, 300);
+    return `${speaker}: ${content}`;
+  });
+
+  return [
+    `User: ${name}`,
+    `Email: ${email}`,
+    "Status: Unresolved IT support issue requiring Helpdesk follow-up.",
+    "Conversation overview:",
+    ...transcriptLines
+  ].join("\n");
+}
+
+export function buildHelpdeskContactDraft({ name, email, summary, transcript }) {
+  const subject = `Ava Helpdesk Escalation - ${name}`;
+  const contactDetails = `Requested by: ${name}\nEmail: ${email}`;
+  const fullBody = `${contactDetails}\n\nCase summary:\n${summary}\n\nConversation transcript:\n${transcript}`;
+  const transcriptNeedsAttachment = encodeURIComponent(fullBody).length > 6000;
+  const body = transcriptNeedsAttachment
+    ? `${contactDetails}\n\nCase summary:\n${summary}\n\nThe full conversation transcript was downloaded separately. Please attach the downloaded transcript before sending this email.`
+    : fullBody;
+  const recipients = helpdeskRecipients.map(encodeURIComponent).join(",");
+  const mailtoUrl = `mailto:${recipients}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+  return { mailtoUrl, transcriptNeedsAttachment };
+}
+
+export function wantsHelpdeskContact(message, history = []) {
+  const lastAssistantMessage = [...history].reverse().find((item) => item.role === "assistant");
+  if (!["helpdesk_offer", "helpdesk_escalation"].includes(lastAssistantMessage?.source)) return false;
+  return /^(yes|yeah|yep|sure|ok|okay|please|yes please|go ahead)\b/i.test(String(message || "").trim());
 }
 
 export function createUploadedPdfDocument({ file, text, pages, now = new Date() }) {
@@ -474,6 +889,14 @@ export async function resolveHelpdeskAnswer({
 }) {
   const triage = classifyHelpdeskTurn(message, history);
   const contextualMessage = triage.contextualMessage;
+  const finish = (result) => {
+    if (triage.type !== "unresolved_follow_up") return result;
+    return {
+      source: "helpdesk_offer",
+      answer:
+        `${result.answer}\n\nThis issue is still unresolved. Would you like to contact Helpdesk? Reply yes and I will prepare the conversation and ask for your email address.`
+    };
+  };
 
   if (triage.type === "needs_clarification") {
     return {
@@ -495,7 +918,7 @@ export async function resolveHelpdeskAnswer({
     return {
       source: "helpdesk_escalation",
       answer:
-        "This same issue has come up more than 5 times and may need a person to check it. Please contact IT Helpdesk. WhatsApp: +60122247105. If WhatsApp is available on this device, open https://wa.me/60122247105."
+        "This same issue has come up more than 5 times and may need a person to check it. Please contact IT Helpdesk. WhatsApp: +60122247105. If WhatsApp is available on this device, open https://wa.me/60122247105. Would you like me to prepare this conversation for IT Helpdesk? Reply yes to continue."
     };
   }
 
@@ -513,38 +936,38 @@ export async function resolveHelpdeskAnswer({
             matchedTerms: localMatch.matchedTerms
           }
         });
-        return { source: "local_pdf", answer };
+        return finish({ source: "local_pdf", answer });
       } catch {
-        return {
+        return finish({
           source: "openai_error",
           answer: buildPdfFallbackAnswer(localMatch)
-        };
+        });
       }
     }
 
-    return {
+    return finish({
       source: "local_pdf",
       answer: buildPdfFallbackAnswer(localMatch)
-    };
+    });
   }
 
   if (openAiResponder) {
     try {
       const answer = await openAiResponder({ message: contextualMessage, history, triage });
-      return { source: "openai", answer };
+      return finish({ source: "openai", answer });
     } catch {
-      return {
+      return finish({
         source: "openai_error",
         answer: buildOfflineFallbackAnswer(message)
-      };
+      });
     }
   }
 
-  return {
+  return finish({
     source: "none",
     answer:
       "I could not find that in the uploaded PDF library, and the OpenAI API key is not configured yet. Please upload a relevant PDF or set OPENAI_API_KEY in .env."
-  };
+  });
 }
 
 function buildPdfFallbackAnswer(localMatch) {
