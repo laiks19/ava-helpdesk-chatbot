@@ -16,3 +16,4 @@ helpdesklog/active-sessions.json
 helpdesklog/*.md
 data/
 .vercel/
+.superpowers/
