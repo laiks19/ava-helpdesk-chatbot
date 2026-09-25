@@ -5,6 +5,7 @@ import {
   createHelpdeskTicket,
   deleteHelpdeskTicket,
   formatTicketNumber,
+  normalizeTicketCaseType,
   summarizeTechnicianKpis,
   summarizeTicketKpis,
   updateHelpdeskTicket,
@@ -53,7 +54,10 @@ function createLocalHelpdeskStore(localPaths) {
   let users = [];
 
   async function initialize() {
-    tickets = await readJson(localPaths.tickets, []);
+    tickets = (await readJson(localPaths.tickets, [])).map((ticket) => ({
+      ...ticket,
+      caseType: normalizeTicketCaseType(ticket.caseType)
+    }));
     technicians = await readJson(localPaths.technicians, []);
     users = await readJson(localPaths.users, []);
     if (!users.some((user) => user.email === "kokseng.lai@ecoworld.my")) {
@@ -263,6 +267,7 @@ function createSupabaseHelpdeskStore(supabase) {
       department: validation.ticket.department,
       category: validation.ticket.category,
       priority: validation.ticket.priority,
+      case_type: options.source === "admin" ? normalizeTicketCaseType(input.caseType) : "Minor",
       subject: validation.ticket.subject,
       description: validation.ticket.description,
       asset: validation.ticket.asset,
@@ -470,6 +475,7 @@ function normalizeTicketRow(row) {
     department: row.department || "",
     category: row.category,
     priority: row.priority,
+    caseType: normalizeTicketCaseType(row.case_type),
     subject: row.subject,
     description: row.description,
     asset: row.asset || "",
@@ -495,6 +501,7 @@ function ticketUpdateRow(ticket) {
     department: ticket.department,
     category: ticket.category,
     priority: ticket.priority,
+    case_type: normalizeTicketCaseType(ticket.caseType),
     subject: ticket.subject,
     description: ticket.description,
     asset: ticket.asset,

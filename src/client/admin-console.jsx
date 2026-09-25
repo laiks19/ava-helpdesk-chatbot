@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 
-const tabs = ["MIS Dashboard", "Tickets", "Users", "Technicians", "Ava Knowledge", "Security"];
+const tabs = ["MIS Dashboard", "Tickets", "Technician KPI", "Users", "Technicians", "Ava Knowledge", "Security"];
 const statuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
 const emptyTicket = {
   requesterName: "",
@@ -8,6 +8,7 @@ const emptyTicket = {
   department: "",
   category: "Hardware",
   priority: "Medium",
+  caseType: "Minor",
   subject: "",
   description: "",
   asset: "",
@@ -189,6 +190,7 @@ export function AdminConsole({ api, auth }) {
         {notice ? <p className="notice compact">{notice}</p> : null}
         {tab === "MIS Dashboard" ? <AdminDashboard dashboard={dashboard} /> : null}
         {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
+        {tab === "Technician KPI" ? <TechnicianKpi rows={dashboard.technicianKpis || []} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
         {tab === "Technicians" ? <TechnicianAdmin technicians={technicians} busy={busy} editor={technicianEditor} setEditor={setTechnicianEditor} onSave={saveTechnician} onDelete={deleteTechnician} /> : null}
         {tab === "Ava Knowledge" ? <KnowledgeAdmin files={files} busy={busy} selectedFiles={selectedFiles} setSelectedFiles={setSelectedFiles} onUpload={uploadPdfs} onDelete={deletePdf} /> : null}
@@ -253,6 +255,51 @@ function Kpi({ title, value, tone }) {
   return <article className={`kpi-card ${tone}`}><div><p>{title}</p><strong>{value}</strong><small>Current helpdesk data</small></div></article>;
 }
 
+function TechnicianKpi({ rows }) {
+  const technicians = rows.filter((row) => row.technicianId !== "unassigned");
+  return (
+    <section className="admin-section technician-kpi-section">
+      <div className="admin-section-title">
+        <div>
+          <h2>Technician Performance KPI</h2>
+          <p>Measured from ticket creation time to completion time for every assigned ticket.</p>
+        </div>
+        <span className="dashboard-private-label">Admin only</span>
+      </div>
+      <div className="kpi-rules" aria-label="KPI formulas">
+        <div><strong>Minor KPI</strong><span>Closed within 5 hours / all Minor tickets</span></div>
+        <div><strong>Major KPI</strong><span>Closed within 36 hours / all Major tickets</span></div>
+      </div>
+      <div className="technician-kpi-table">
+        <div className="technician-kpi-head">
+          <span>Technician</span><span>Total Tickets</span><span>Minor Achieved</span><span>Minor KPI</span><span>Major Achieved</span><span>Major KPI</span><span>Avg Completion</span>
+        </div>
+        {technicians.map((row) => (
+          <div className="technician-kpi-row" key={row.technicianId}>
+            <span><strong>{row.name}</strong></span>
+            <span className="kpi-number">{row.total}</span>
+            <span>{row.minor.achieved} / {row.minor.total}</span>
+            <KpiMeter value={row.minor.kpiPercent} />
+            <span>{row.major.achieved} / {row.major.total}</span>
+            <KpiMeter value={row.major.kpiPercent} />
+            <span>{row.averageResolutionHours}h</span>
+          </div>
+        ))}
+        {!technicians.length ? <p className="history-state">Add technicians and assign tickets to begin measuring KPI performance.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function KpiMeter({ value = 0 }) {
+  return (
+    <span className="kpi-meter">
+      <strong>{value}%</strong>
+      <i><b style={{ width: `${Math.min(100, Math.max(0, value))}%` }} /></i>
+    </span>
+  );
+}
+
 function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, onDelete }) {
   return (
     <section className="admin-section">
@@ -285,6 +332,7 @@ function TicketEditor({ value, setValue, technicians, busy, onSave, onCancel }) 
         <label><span>Department</span><input value={value.department || ""} onChange={(e) => update("department", e.target.value)} /></label>
         <label><span>Category</span><input value={value.category} onChange={(e) => update("category", e.target.value)} required /></label>
         <label><span>Priority</span><select value={value.priority} onChange={(e) => update("priority", e.target.value)}><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+        <label><span>Case Type</span><select value={value.caseType || "Minor"} onChange={(e) => update("caseType", e.target.value)}><option>Minor</option><option>Major</option></select></label>
         <label><span>Status</span><select value={value.status || "Open"} onChange={(e) => update("status", e.target.value)}>{statuses.map((item) => <option key={item}>{item}</option>)}</select></label>
         <label><span>Technician</span><select value={value.assignedTechnicianId || ""} onChange={(e) => update("assignedTechnicianId", e.target.value)}><option value="">Unassigned</option>{technicians.filter((item) => item.isActive).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
         <label><span>Subject</span><input value={value.subject} onChange={(e) => update("subject", e.target.value)} required /></label>

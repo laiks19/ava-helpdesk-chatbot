@@ -54,6 +54,7 @@ export function validateHelpdeskContact({ name, email }) {
 const ticketPriorities = ["Critical", "High", "Medium", "Low"];
 const ticketStatuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
 const ticketCategories = ["Hardware", "Software", "Network", "Email", "Account Access", "Printer", "Security", "Other"];
+const ticketCaseTypes = ["Minor", "Major"];
 const prioritySlaHours = {
   Critical: 4,
   High: 8,
@@ -72,6 +73,10 @@ function cleanEmail(value) {
 function normalizeTicketChoice(value, allowed, fallback = "") {
   const text = cleanTicketText(value, 80);
   return allowed.find((item) => item.toLowerCase() === text.toLowerCase()) || fallback;
+}
+
+export function normalizeTicketCaseType(value, fallback = "Minor") {
+  return normalizeTicketChoice(value, ticketCaseTypes, fallback);
 }
 
 export function validateProfileInput(input = {}) {
@@ -156,14 +161,16 @@ export function createHelpdeskTicket({
   }
   const ticket = validation.ticket;
   const priority = normalizeTicketChoice(ticket.priority, ticketPriorities, "Medium");
+  const normalizedSource = ["form", "ava", "admin"].includes(source) ? source : "form";
 
   return {
     id: formatTicketNumber(sequence),
     ticketNumber: Number(sequence),
     ...ticket,
     priority,
+    caseType: normalizedSource === "admin" ? normalizeTicketCaseType(input.caseType) : "Minor",
     status: "Open",
-    source: ["form", "ava", "admin"].includes(source) ? source : "form",
+    source: normalizedSource,
     requesterUserId: cleanTicketText(requesterUserId, 80),
     assignedTechnicianId: "",
     assignedTo: "",
@@ -191,6 +198,7 @@ export function updateHelpdeskTicket(ticket, updates = {}, now = new Date()) {
     department: cleanTicketText(updates.department ?? ticket.department, 120),
     category: cleanTicketText(updates.category ?? ticket.category, 80),
     priority,
+    caseType: normalizeTicketCaseType(updates.caseType, normalizeTicketCaseType(ticket.caseType)),
     subject: cleanTicketText(updates.subject ?? ticket.subject, 180),
     description: cleanTicketText(updates.description ?? ticket.description, 2000),
     asset: cleanTicketText(updates.asset ?? ticket.asset, 120),
@@ -258,54 +266,66 @@ export function summarizeTicketKpis({ tickets = [], now = new Date() } = {}) {
 }
 
 export function summarizeTechnicianKpis({ tickets = [], technicians = [] } = {}) {
-  const rows = new Map(
-    technicians.map((technician) => [
-      technician.id,
-      {
-        technicianId: technician.id,
-        name: technician.name,
-        open: 0,
-        inProgress: 0,
-        closed: 0,
-        total: 0,
-        completionPercent: 0
-      }
-    ])
-  );
-  rows.set("unassigned", {
-    technicianId: "unassigned",
-    name: "Unassigned",
+  const createRow = (technicianId, name) => ({
+    technicianId,
+    name,
     open: 0,
     inProgress: 0,
     closed: 0,
     total: 0,
-    completionPercent: 0
+    completionPercent: 0,
+    minor: { total: 0, achieved: 0, kpiPercent: 0 },
+    major: { total: 0, achieved: 0, kpiPercent: 0 },
+    averageResolutionHours: 0,
+    resolutionHoursTotal: 0,
+    resolvedCount: 0
   });
+  const rows = new Map(
+    technicians.map((technician) => [
+      technician.id,
+      createRow(technician.id, technician.name)
+    ])
+  );
+  rows.set("unassigned", createRow("unassigned", "Unassigned"));
 
   for (const ticket of tickets) {
     if (ticket.deletedAt) continue;
     const key = ticket.assignedTechnicianId || "unassigned";
     if (!rows.has(key)) {
-      rows.set(key, {
-        technicianId: key,
-        name: ticket.assignedTo || "Inactive technician",
-        open: 0,
-        inProgress: 0,
-        closed: 0,
-        total: 0,
-        completionPercent: 0
-      });
+      rows.set(key, createRow(key, ticket.assignedTo || "Inactive technician"));
     }
     const row = rows.get(key);
     row.total += 1;
+    const caseType = normalizeTicketCaseType(ticket.caseType);
+    const caseKpi = caseType === "Major" ? row.major : row.minor;
+    caseKpi.total += 1;
     if (["Resolved", "Closed"].includes(ticket.status)) row.closed += 1;
     else if (ticket.status === "In Progress") row.inProgress += 1;
     else row.open += 1;
+
+    if (ticket.closedAt && ticket.createdAt) {
+      const resolutionHours = (new Date(ticket.closedAt).getTime() - new Date(ticket.createdAt).getTime()) / 36e5;
+      if (Number.isFinite(resolutionHours) && resolutionHours >= 0) {
+        row.resolutionHoursTotal += resolutionHours;
+        row.resolvedCount += 1;
+        const targetHours = caseType === "Major" ? 36 : 5;
+        if (resolutionHours <= targetHours) caseKpi.achieved += 1;
+      }
+    }
   }
 
-  return [...rows.values()].map((row) => ({
+  return [...rows.values()].map(({ resolutionHoursTotal, resolvedCount, ...row }) => ({
     ...row,
-    completionPercent: row.total ? Math.round((row.closed / row.total) * 100) : 0
+    completionPercent: row.total ? Math.round((row.closed / row.total) * 100) : 0,
+    minor: {
+      ...row.minor,
+      kpiPercent: row.minor.total ? Math.round((row.minor.achieved / row.minor.total) * 100) : 0
+    },
+    major: {
+      ...row.major,
+      kpiPercent: row.major.total ? Math.round((row.major.achieved / row.major.total) * 100) : 0
+    },
+    averageResolutionHours: resolvedCount ? Math.round(resolutionHoursTotal / resolvedCount) : 0
   }));
 }
 

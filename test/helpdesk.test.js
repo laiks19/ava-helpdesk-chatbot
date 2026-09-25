@@ -587,6 +587,27 @@ test("helpdesk tickets get a readable id, lifecycle fields, and close timestamps
   assert.equal(ticket.createdAt, "2026-09-24T03:15:00.000Z");
   assert.equal(ticket.closedAt, "");
   assert.equal(ticket.slaHours, 8);
+  assert.equal(ticket.caseType, "Minor");
+});
+
+test("only admin-created or admin-updated tickets can be classified as Major", () => {
+  const input = {
+    requesterName: "Mei Lin",
+    email: "mei@example.com",
+    category: "Network",
+    priority: "High",
+    subject: "Office network unavailable",
+    description: "The office network is unavailable.",
+    caseType: "Major"
+  };
+
+  const publicTicket = createHelpdeskTicket({ input, source: "form" });
+  const adminTicket = createHelpdeskTicket({ input, source: "admin" });
+  const updatedTicket = updateHelpdeskTicket(publicTicket, { caseType: "Major" });
+
+  assert.equal(publicTicket.caseType, "Minor");
+  assert.equal(adminTicket.caseType, "Major");
+  assert.equal(updatedTicket.caseType, "Major");
 });
 
 test("ticket KPI summary counts open, closed, SLA, priority, and status mix", () => {
@@ -713,10 +734,44 @@ test("technician KPI groups open in-progress and closed tickets by assignee", ()
     inProgress: 1,
     closed: 2,
     total: 4,
-    completionPercent: 50
+    completionPercent: 50,
+    minor: { total: 4, achieved: 0, kpiPercent: 0 },
+    major: { total: 0, achieved: 0, kpiPercent: 0 },
+    averageResolutionHours: 0
   });
   assert.equal(result.find((item) => item.technicianId === "unassigned").open, 1);
   assert.equal(result.find((item) => item.technicianId === "tech-2").total, 0);
+});
+
+test("technician KPI measures Minor and Major achievements against all assigned tickets", () => {
+  const technicians = [{ id: "tech-1", name: "Alex Tan" }];
+  const tickets = [
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T04:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T06:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "", status: "Open" },
+    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-09-23T00:00:00.000Z", closedAt: "2026-09-24T12:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-09-23T00:00:00.000Z", closedAt: "2026-09-24T13:00:00.000Z", status: "Closed" }
+  ];
+
+  const [row] = summarizeTechnicianKpis({ tickets, technicians });
+
+  assert.equal(row.total, 5);
+  assert.deepEqual(row.minor, { total: 3, achieved: 1, kpiPercent: 33 });
+  assert.deepEqual(row.major, { total: 2, achieved: 1, kpiPercent: 50 });
+  assert.equal(row.averageResolutionHours, 21);
+});
+
+test("admin UI owns case classification and exposes a Technician KPI tab", async () => {
+  const [mainSource, adminSource] = await Promise.all([
+    readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/client/admin-console.jsx", import.meta.url), "utf8")
+  ]);
+
+  assert.doesNotMatch(mainSource, /Case Type/);
+  assert.match(adminSource, /"Technician KPI"/);
+  assert.match(adminSource, /<option>Minor<\/option><option>Major<\/option>/);
+  assert.match(adminSource, /Minor KPI/);
+  assert.match(adminSource, /Major KPI/);
 });
 
 test("Ava ticket intake asks for missing details and completes after optional skips", () => {

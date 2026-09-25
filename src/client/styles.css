@@ -1399,6 +1399,106 @@ select:disabled {
   overflow: hidden;
 }
 
+.technician-kpi-section {
+  display: grid;
+  gap: 18px;
+}
+
+.kpi-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.kpi-rules div {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-left: 3px solid #1687a1;
+  background: #f0f8fa;
+}
+
+.kpi-rules strong {
+  color: #0a5268;
+  font-size: 14px;
+}
+
+.kpi-rules span {
+  color: #5b6d81;
+  font-size: 12px;
+}
+
+.technician-kpi-table {
+  overflow-x: auto;
+  border: 1px solid #dbe5ee;
+  border-radius: 8px;
+}
+
+.technician-kpi-head,
+.technician-kpi-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.25fr) 90px 110px minmax(120px, .8fr) 110px minmax(120px, .8fr) 110px;
+  gap: 14px;
+  align-items: center;
+  min-width: 980px;
+  padding: 13px 16px;
+}
+
+.technician-kpi-head {
+  color: #586b7f;
+  background: #f4f8fa;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.technician-kpi-row {
+  border-top: 1px solid #e4edf2;
+  color: #294158;
+  font-size: 13px;
+}
+
+.technician-kpi-row > span {
+  min-width: 0;
+}
+
+.technician-kpi-row > span:nth-child(3),
+.technician-kpi-row > span:nth-child(5) {
+  color: #53677b;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-number {
+  color: #0a6077;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.kpi-meter {
+  display: grid;
+  gap: 6px;
+}
+
+.kpi-meter strong {
+  color: #0b6177;
+  font-size: 14px;
+}
+
+.kpi-meter > i {
+  display: block;
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #e3ecf1;
+}
+
+.kpi-meter > i > b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #11849b;
+}
+
 .technician-progress .table-title p {
   margin: 4px 0 0;
   color: #65758a;
@@ -1873,6 +1973,7 @@ select:disabled {
 
   .form-grid,
   .ticket-review-list,
+  .kpi-rules,
   .kpi-grid,
   .analytics-grid,
   .admin-grid {

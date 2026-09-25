@@ -167,6 +167,18 @@ test("helpdesk migration creates protected account and ticket tables", async () 
   assert.match(sql, /revoke all/i);
 });
 
+test("ticket case type migration adds constrained Minor and Major classification", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_ticket_case_type_kpi.sql")
+  );
+
+  assert.ok(migrationName, "ticket case type KPI migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  assert.match(sql, /add column if not exists case_type text not null default 'Minor'/i);
+  assert.match(sql, /case_type in \('Minor', 'Major'\)/i);
+});
+
 test("ordered Supabase migrations include Ava persistence and private PDF storage", async () => {
   const migrationsDir = path.join(projectRoot, "supabase", "migrations");
   const migrationNames = (await readdir(migrationsDir)).sort();
