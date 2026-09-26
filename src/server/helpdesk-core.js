@@ -265,6 +265,19 @@ export function summarizeTicketKpis({ tickets = [], now = new Date() } = {}) {
   };
 }
 
+export function filterTicketsByCreatedDateRange({ tickets = [], dateFrom = "", dateTo = "" } = {}) {
+  const fromTime = dateFrom ? Date.parse(`${dateFrom}T00:00:00.000+08:00`) : null;
+  const toTime = dateTo ? Date.parse(`${dateTo}T23:59:59.999+08:00`) : null;
+
+  return tickets.filter((ticket) => {
+    const createdTime = Date.parse(ticket.createdAt);
+    if (!Number.isFinite(createdTime)) return !dateFrom && !dateTo;
+    if (Number.isFinite(fromTime) && createdTime < fromTime) return false;
+    if (Number.isFinite(toTime) && createdTime > toTime) return false;
+    return true;
+  });
+}
+
 export function summarizeTechnicianKpis({ tickets = [], technicians = [] } = {}) {
   const createRow = (technicianId, name) => ({
     technicianId,

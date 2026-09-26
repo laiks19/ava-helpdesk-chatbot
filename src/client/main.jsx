@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { connectionErrorMessage, getApiBaseUrl } from "./api-base.js";
+import { buildAdminDashboardPath, connectionErrorMessage, getApiBaseUrl } from "./api-base.js";
 import { AdminConsole } from "./admin-console.jsx";
 import { AiNews } from "./ai-news.jsx";
 import { AuthDialog, AuthProvider, useAuth } from "./auth.jsx";
@@ -53,8 +53,8 @@ const api = {
   async adminTickets(token) {
     return request("/api/admin/tickets", { headers: authHeaders(token) });
   },
-  async adminDashboard(token) {
-    return request("/api/admin/dashboard", { headers: authHeaders(token) });
+  async adminDashboard(token, filters = {}) {
+    return request(buildAdminDashboardPath(filters), { headers: authHeaders(token) });
   },
   async adminCreateTicket(token, ticket) {
     return request("/api/admin/tickets", { method: "POST", headers: authHeaders(token), body: JSON.stringify(ticket) });

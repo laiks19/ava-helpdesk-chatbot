@@ -119,6 +119,21 @@ test("local store manages pending users and technician KPI data", async () => {
   assert.equal(dashboard.kpis.totalTickets, 1);
 });
 
+test("dashboard filters tickets and technician KPIs by ticket creation date", async () => {
+  const store = createHelpdeskStore();
+  await store.initialize();
+  const technician = await store.createTechnician({ name: "Alex Tan" }, "admin-local");
+  const ticket = await store.createTicket(validTicket);
+  await store.updateTicket(ticket.id, { assignedTechnicianId: technician.id, assignedTo: technician.name });
+
+  const dashboard = await store.getDashboard({ dateFrom: "2999-01-01", dateTo: "2999-01-31" });
+
+  assert.deepEqual(dashboard.tickets, []);
+  assert.equal(dashboard.kpis.totalTickets, 0);
+  assert.equal(dashboard.technicianKpis[0].total, 0);
+  assert.deepEqual(dashboard.filters, { dateFrom: "2999-01-01", dateTo: "2999-01-31" });
+});
+
 test("public dashboard removes requester and private ticket details", () => {
   const dashboard = toPublicDashboard({
     tickets: [{

@@ -171,8 +171,11 @@ app.get("/api/admin/tickets", requireAdmin, asyncRoute(async (_req, res) => {
   res.json(await helpdeskStore.getDashboard());
 }));
 
-app.get("/api/admin/dashboard", requireAdmin, asyncRoute(async (_req, res) => {
-  res.json(await helpdeskStore.getDashboard());
+app.get("/api/admin/dashboard", requireAdmin, asyncRoute(async (req, res) => {
+  res.json(await helpdeskStore.getDashboard({
+    dateFrom: String(req.query.dateFrom || ""),
+    dateTo: String(req.query.dateTo || "")
+  }));
 }));
 
 app.post("/api/admin/tickets", requireAdmin, asyncRoute(async (req, res) => {

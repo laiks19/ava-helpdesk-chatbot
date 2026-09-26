@@ -23,6 +23,10 @@
       "dest": "/assets/$1"
     },
     {
+      "src": "/ava-helpdesk-logo.png",
+      "dest": "/ava-helpdesk-logo.png"
+    },
+    {
       "src": "/(.*)",
       "dest": "/index.html"
     }

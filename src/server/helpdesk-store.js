@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   createHelpdeskTicket,
   deleteHelpdeskTicket,
+  filterTicketsByCreatedDateRange,
   formatTicketNumber,
   normalizeTicketCaseType,
   summarizeTechnicianKpis,
@@ -211,13 +212,20 @@ function createLocalHelpdeskStore(localPaths) {
     return technician;
   }
 
-  async function getDashboard() {
-    const visibleTickets = await listTickets();
+  async function getDashboard(filters = {}) {
+    const visibleTickets = filterTicketsByCreatedDateRange({
+      tickets: await listTickets(),
+      ...filters
+    });
     return {
       tickets: visibleTickets,
       kpis: summarizeTicketKpis({ tickets: visibleTickets }),
       technicianKpis: summarizeTechnicianKpis({ tickets: visibleTickets, technicians }),
-      technicians: await listTechnicians({ includeInactive: false })
+      technicians: await listTechnicians({ includeInactive: false }),
+      filters: {
+        dateFrom: filters.dateFrom || "",
+        dateTo: filters.dateTo || ""
+      }
     };
   }
 
@@ -412,16 +420,21 @@ function createSupabaseHelpdeskStore(supabase) {
     return normalizeTechnicianRow(data);
   }
 
-  async function getDashboard() {
-    const [tickets, technicians] = await Promise.all([
+  async function getDashboard(filters = {}) {
+    const [allTickets, technicians] = await Promise.all([
       listTickets(),
       listTechnicians({ includeInactive: true })
     ]);
+    const tickets = filterTicketsByCreatedDateRange({ tickets: allTickets, ...filters });
     return {
       tickets,
       kpis: summarizeTicketKpis({ tickets }),
       technicianKpis: summarizeTechnicianKpis({ tickets, technicians }),
-      technicians: technicians.filter((technician) => technician.isActive)
+      technicians: technicians.filter((technician) => technician.isActive),
+      filters: {
+        dateFrom: filters.dateFrom || "",
+        dateTo: filters.dateTo || ""
+      }
     };
   }
 

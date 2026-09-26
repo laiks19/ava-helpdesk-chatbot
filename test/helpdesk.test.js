@@ -29,6 +29,7 @@ import {
   updateHelpdeskTicket,
   deleteHelpdeskTicket,
   formatTicketNumber,
+  filterTicketsByCreatedDateRange,
   summarizeTicketKpis,
   summarizeTechnicianKpis,
   startTicketIntake,
@@ -759,6 +760,51 @@ test("technician KPI measures Minor and Major achievements against all assigned 
   assert.deepEqual(row.minor, { total: 3, achieved: 1, kpiPercent: 33 });
   assert.deepEqual(row.major, { total: 2, achieved: 1, kpiPercent: 50 });
   assert.equal(row.averageResolutionHours, 21);
+});
+
+test("ticket date range includes both Malaysia calendar-date boundaries", () => {
+  const tickets = [
+    { id: "before", createdAt: "2026-09-01T15:59:59.999Z" },
+    { id: "from", createdAt: "2026-09-01T16:00:00.000Z" },
+    { id: "inside", createdAt: "2026-09-15T03:00:00.000Z" },
+    { id: "to", createdAt: "2026-09-30T15:59:59.999Z" },
+    { id: "after", createdAt: "2026-09-30T16:00:00.000Z" }
+  ];
+
+  const filtered = filterTicketsByCreatedDateRange({
+    tickets,
+    dateFrom: "2026-09-02",
+    dateTo: "2026-09-30"
+  });
+
+  assert.deepEqual(filtered.map((ticket) => ticket.id), ["from", "inside", "to"]);
+});
+
+test("ticket date range supports an open start or end date", () => {
+  const tickets = [
+    { id: "older", createdAt: "2026-08-31T15:59:59.999Z" },
+    { id: "newer", createdAt: "2026-09-14T16:00:00.000Z" }
+  ];
+
+  assert.deepEqual(
+    filterTicketsByCreatedDateRange({ tickets, dateFrom: "2026-09-01" }).map((ticket) => ticket.id),
+    ["newer"]
+  );
+  assert.deepEqual(
+    filterTicketsByCreatedDateRange({ tickets, dateTo: "2026-09-01" }).map((ticket) => ticket.id),
+    ["older"]
+  );
+});
+
+test("admin dashboard URL carries only active ticket date filters", async () => {
+  const apiBase = await import("../src/client/api-base.js");
+
+  assert.equal(typeof apiBase.buildAdminDashboardPath, "function");
+  assert.equal(
+    apiBase.buildAdminDashboardPath({ dateFrom: "2026-09-01", dateTo: "2026-09-30" }),
+    "/api/admin/dashboard?dateFrom=2026-09-01&dateTo=2026-09-30"
+  );
+  assert.equal(apiBase.buildAdminDashboardPath({ dateFrom: "", dateTo: "" }), "/api/admin/dashboard");
 });
 
 test("admin UI owns case classification and exposes a Technician KPI tab", async () => {
