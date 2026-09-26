@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { classifySignUpResult, getSupabaseBrowserClient } from "./supabase-client.js";
+import { classifySignUpResult, getEmailRedirectTo, getSupabaseBrowserClient } from "./supabase-client.js";
 
 const AuthContext = createContext(null);
 
@@ -68,10 +68,14 @@ export function AuthProvider({ api, children }) {
     if (!supabase) {
       throw new Error("User registration becomes available after Supabase environment variables are configured.");
     }
+    const emailRedirectTo = getEmailRedirectTo();
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName, department } }
+      options: {
+        data: { full_name: fullName, department },
+        ...(emailRedirectTo ? { emailRedirectTo } : {})
+      }
     });
     if (error) throw error;
     const outcome = classifySignUpResult(data);

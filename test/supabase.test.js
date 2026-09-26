@@ -238,6 +238,14 @@ test("browser signup classification distinguishes existing accounts from new reg
   );
 });
 
+test("browser signup confirmation returns to the current helpdesk origin", () => {
+  assert.equal(
+    browserSupabase.getEmailRedirectTo({ origin: "https://ava-helpdesk-chatbot.vercel.app" }),
+    "https://ava-helpdesk-chatbot.vercel.app"
+  );
+  assert.equal(browserSupabase.getEmailRedirectTo({}), undefined);
+});
+
 test("latest account migration automatically approves new user profiles", async () => {
   const migrationsDir = path.join(projectRoot, "supabase", "migrations");
   const migrationName = (await readdir(migrationsDir)).find((name) =>

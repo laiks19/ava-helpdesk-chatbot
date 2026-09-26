@@ -10,6 +10,11 @@ export function classifySignUpResult({ user, session } = {}) {
   return { kind: "confirmation-required" };
 }
 
+export function getEmailRedirectTo(locationLike = globalThis.location) {
+  const origin = String(locationLike?.origin || "").trim();
+  return origin || undefined;
+}
+
 export function getSupabaseBrowserClient() {
   if (browserClient !== undefined) return browserClient;
   const url = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
