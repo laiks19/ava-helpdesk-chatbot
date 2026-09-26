@@ -415,7 +415,7 @@ function TicketEditor({ value, setValue, technicians, busy, onSave, onCancel }) 
 function UserAdmin({ users, busy, editor, setEditor, onSave, onAction }) {
   return (
     <section className="admin-section">
-      <div className="admin-section-title"><div><h2>Users</h2><p>Approve registrations and assign administrator or user access.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ fullName: "", email: "", department: "", password: "", role: "user", approvalStatus: "approved", isActive: true })}>Add user</button></div>
+      <div className="admin-section-title"><div><h2>Users</h2><p>Manage account status and assign administrator or user access.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ fullName: "", email: "", department: "", password: "", role: "user", approvalStatus: "approved", isActive: true })}>Add user</button></div>
       {editor ? (
         <form className="admin-editor editor-grid" onSubmit={onSave}>
           <label><span>Name</span><input value={editor.fullName} onChange={(e) => setEditor({ ...editor, fullName: e.target.value })} required /></label>

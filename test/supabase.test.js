@@ -13,6 +13,7 @@ import {
   getSupabaseSessionSafely,
   saveSupabaseSessionSafely
 } from "../src/server/supabase-store.js";
+import * as browserSupabase from "../src/client/supabase-client.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -220,6 +221,35 @@ test("browser Supabase client uses only publishable environment values", async (
   assert.match(source, /VITE_SUPABASE_URL/);
   assert.match(source, /VITE_SUPABASE_PUBLISHABLE_KEY/);
   assert.doesNotMatch(source, /SERVICE_ROLE/);
+});
+
+test("browser signup classification distinguishes existing accounts from new registrations", () => {
+  assert.deepEqual(
+    browserSupabase.classifySignUpResult({ user: { identities: [] }, session: null }),
+    { kind: "existing-account" }
+  );
+  assert.deepEqual(
+    browserSupabase.classifySignUpResult({ user: { identities: [{ id: "identity-1" }] }, session: null }),
+    { kind: "confirmation-required" }
+  );
+  assert.deepEqual(
+    browserSupabase.classifySignUpResult({ user: { identities: [{ id: "identity-1" }] }, session: { access_token: "token" } }),
+    { kind: "authenticated" }
+  );
+});
+
+test("latest account migration automatically approves new user profiles", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_auto_approve_new_accounts.sql")
+  );
+
+  assert.ok(migrationName, "automatic account approval migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  assert.match(sql, /alter column approval_status set default 'approved'/i);
+  assert.match(sql, /'approved'/i);
+  assert.match(sql, /approved_at/i);
+  assert.doesNotMatch(sql, /update public\.profiles/i, "existing profiles must not be modified");
 });
 
 test("server Supabase admin and bootstrap keep privileged keys server-side", async () => {

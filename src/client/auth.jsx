@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { getSupabaseBrowserClient } from "./supabase-client.js";
+import { classifySignUpResult, getSupabaseBrowserClient } from "./supabase-client.js";
 
 const AuthContext = createContext(null);
 
@@ -74,7 +74,13 @@ export function AuthProvider({ api, children }) {
       options: { data: { full_name: fullName, department } }
     });
     if (error) throw error;
-    if (data.session) {
+    const outcome = classifySignUpResult(data);
+    if (outcome.kind === "existing-account") {
+      const existingAccountError = new Error("This account already exists. Log in using your original password.");
+      existingAccountError.code = "ACCOUNT_EXISTS";
+      throw existingAccountError;
+    }
+    if (outcome.kind === "authenticated") {
       await api.registerProfile(data.session.access_token, { fullName, department });
       setSession(data.session);
       const response = await api.me(data.session.access_token);
@@ -89,7 +95,6 @@ export function AuthProvider({ api, children }) {
       approvalStatus: "pending",
       isActive: true
     };
-    setProfile(pendingProfile);
     return pendingProfile;
   }
 
@@ -152,8 +157,9 @@ export function AuthDialog({ onClose }) {
         ? await auth.signIn(form.email, form.password)
         : await auth.register(form);
       if (profile?.approvalStatus === "approved") onClose();
-      else setNotice("Your account was created and is waiting for administrator approval.");
+      else setNotice("Account created. Confirm your email, then log in.");
     } catch (error) {
+      if (error.code === "ACCOUNT_EXISTS") setMode("login");
       setNotice(error.message);
     } finally {
       setBusy(false);
@@ -166,7 +172,7 @@ export function AuthDialog({ onClose }) {
         <div className="dialog-title-row">
           <div>
             <h2 id="auth-title">{mode === "login" ? "Log in" : "Create account"}</h2>
-            <p>{mode === "login" ? "Access your tickets or the admin console." : "Submit your account for MIS approval."}</p>
+            <p>{mode === "login" ? "Access your tickets or the admin console." : "Create an account for your helpdesk requests."}</p>
           </div>
           <button className="icon-close" type="button" onClick={onClose} aria-label="Close">×</button>
         </div>
