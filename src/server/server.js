@@ -458,6 +458,7 @@ app.post("/api/session/:sessionId/contact", async (req, res) => {
 
 app.post("/api/session/:sessionId/end", async (req, res) => {
   const sessionId = req.params.sessionId;
+  await hydrateSession(sessionId);
   const messages = sessions.getMessages(sessionId);
   if (messages.length) {
     if (shouldWriteLocalConversationLog({ isVercel })) {
@@ -468,6 +469,11 @@ app.post("/api/session/:sessionId/end", async (req, res) => {
   await sessions.clear(sessionId);
   if (supabase) await supabase.deleteSession(sessionId);
   res.json({ ok: true, archivedMessages: messages.length });
+});
+
+app.post("/api/session/:sessionId/heartbeat", async (req, res) => {
+  if (supabase) await supabase.touchSession(req.params.sessionId);
+  res.json({ ok: true });
 });
 
 app.post("/api/admin/login", (req, res) => {

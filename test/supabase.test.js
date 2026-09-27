@@ -92,6 +92,30 @@ test("Supabase REST client accepts successful empty JSON responses", async () =>
   await assert.doesNotReject(() => client.saveSession("tab-a", [{ role: "user", content: "hello" }]));
 });
 
+test("Supabase REST client refreshes an existing Ava session heartbeat", async () => {
+  const calls = [];
+  const client = createSupabaseRestClient({
+    config: {
+      url: "https://example.supabase.co",
+      key: "service-role",
+      bucket: "helpdesk-pdfs"
+    },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return { ok: true, status: 204, text: async () => "" };
+    }
+  });
+
+  await client.touchSession("tab-a");
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/rest\/v1\/ava_sessions\?session_id=eq\.tab-a/);
+  assert.equal(calls[0].options.method, "PATCH");
+  const body = JSON.parse(calls[0].options.body);
+  assert.match(body.updated_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal("messages" in body, false);
+});
+
 test("Supabase client deletes PDFs from storage and document table", async () => {
   const calls = [];
   const client = createSupabaseRestClient({
@@ -258,6 +282,22 @@ test("latest account migration automatically approves new user profiles", async 
   assert.match(sql, /'approved'/i);
   assert.match(sql, /approved_at/i);
   assert.doesNotMatch(sql, /update public\.profiles/i, "existing profiles must not be modified");
+});
+
+test("Ava session lifecycle migration archives expired browser sessions", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_ava_session_lifecycle.sql")
+  );
+
+  assert.ok(migrationName, "Ava session lifecycle migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  assert.match(sql, /create extension if not exists pg_cron/i);
+  assert.match(sql, /private\.archive_stale_ava_sessions/i);
+  assert.match(sql, /interval '2 minutes'/i);
+  assert.match(sql, /insert into public\.ava_conversation_logs/i);
+  assert.match(sql, /delete from public\.ava_sessions/i);
+  assert.match(sql, /cron\.schedule/i);
 });
 
 test("server Supabase admin and bootstrap keep privileged keys server-side", async () => {

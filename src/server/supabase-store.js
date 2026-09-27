@@ -81,6 +81,12 @@ export function createSupabaseRestClient({ config = getSupabaseConfig(), fetchIm
         })
       });
     },
+    async touchSession(sessionId) {
+      await request(`/rest/v1/ava_sessions?session_id=eq.${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ updated_at: new Date().toISOString() })
+      });
+    },
     async deleteSession(sessionId) {
       await request(`/rest/v1/ava_sessions?session_id=eq.${encodeURIComponent(sessionId)}`, {
         method: "DELETE"

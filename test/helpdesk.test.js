@@ -37,7 +37,70 @@ import {
   shouldWriteLocalConversationLog,
   resolveHelpdeskAnswer
 } from "../src/server/helpdesk-core.js";
-import { connectionErrorMessage, getApiBaseUrl } from "../src/client/api-base.js";
+import {
+  clearChatSessionId,
+  connectionErrorMessage,
+  endChatBeforeSignOut,
+  getApiBaseUrl,
+  getChatSessionId,
+  peekChatSessionId
+} from "../src/client/api-base.js";
+
+function createMemoryStorage() {
+  const values = new Map();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key)
+  };
+}
+
+test("Ava chat session survives refreshes but remains isolated per browser tab", () => {
+  const firstTab = createMemoryStorage();
+  const secondTab = createMemoryStorage();
+
+  assert.equal(getChatSessionId(firstTab, () => "tab-a"), "tab-a");
+  assert.equal(getChatSessionId(firstTab, () => "unused"), "tab-a");
+  assert.equal(getChatSessionId(secondTab, () => "tab-b"), "tab-b");
+  assert.equal(peekChatSessionId(firstTab), "tab-a");
+
+  clearChatSessionId(firstTab);
+  assert.equal(peekChatSessionId(firstTab), null);
+});
+
+test("logout ends and clears the current Ava conversation before signing out", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("ava-tab-session-id", "tab-a");
+  const events = [];
+
+  await endChatBeforeSignOut({
+    storage,
+    endSession: async (sessionId) => events.push(`end:${sessionId}`),
+    signOut: async () => events.push("sign-out")
+  });
+
+  assert.deepEqual(events, ["end:tab-a", "sign-out"]);
+  assert.equal(peekChatSessionId(storage), null);
+});
+
+test("logout still clears local chat state and signs out when archiving fails", async () => {
+  const storage = createMemoryStorage();
+  storage.setItem("ava-tab-session-id", "tab-a");
+  let signedOut = false;
+
+  await endChatBeforeSignOut({
+    storage,
+    endSession: async () => {
+      throw new Error("offline");
+    },
+    signOut: async () => {
+      signedOut = true;
+    }
+  });
+
+  assert.equal(signedOut, true);
+  assert.equal(peekChatSessionId(storage), null);
+});
 
 test("session store keeps conversations isolated by browser tab session id", () => {
   const sessions = createSessionStore();

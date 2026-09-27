@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { buildAdminDashboardPath, connectionErrorMessage, getApiBaseUrl } from "./api-base.js";
+import {
+  buildAdminDashboardPath,
+  clearChatSessionId,
+  connectionErrorMessage,
+  endChatBeforeSignOut,
+  getApiBaseUrl,
+  getChatSessionId
+} from "./api-base.js";
 import { AdminConsole } from "./admin-console.jsx";
 import { AiNews } from "./ai-news.jsx";
 import { AuthDialog, AuthProvider, useAuth } from "./auth.jsx";
@@ -76,6 +83,9 @@ const api = {
   },
   async end(sessionId) {
     return request(`/api/session/${sessionId}/end`, { method: "POST" });
+  },
+  async heartbeat(sessionId) {
+    return request(`/api/session/${sessionId}/heartbeat`, { method: "POST" });
   },
   async contactHelpdesk(sessionId, contact) {
     return request(`/api/session/${sessionId}/contact`, {
@@ -172,18 +182,10 @@ async function request(url, options = {}) {
   return payload;
 }
 
-function getSessionId() {
-  const key = "ava-tab-session-id";
-  let id = sessionStorage.getItem(key);
-  if (!id) {
-    id = crypto.randomUUID();
-    sessionStorage.setItem(key, id);
-  }
-  return id;
-}
-
 function App() {
   const auth = useAuth();
+  const [chatSessionVersion, setChatSessionVersion] = useState(0);
+  const sessionId = useMemo(getChatSessionId, [chatSessionVersion]);
   const [route, setRoute] = useState(hashToRoute());
   const [ticketDraft, setTicketDraft] = useState(defaultTicket);
   const [ticketHistory, setTicketHistory] = useState([]);
@@ -227,6 +229,32 @@ function App() {
     };
   }, [auth.token, isApprovedUser]);
 
+  useEffect(() => {
+    const heartbeat = () => api.heartbeat(sessionId).catch(() => {});
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 30_000);
+    return () => window.clearInterval(timer);
+  }, [sessionId]);
+
+  function renewChatSession(message = "") {
+    clearChatSessionId();
+    setChatSessionVersion((current) => current + 1);
+    if (message) setNotice(message);
+  }
+
+  async function signOut() {
+    try {
+      await endChatBeforeSignOut({
+        endSession: api.end,
+        signOut: auth.signOut
+      });
+    } finally {
+      setChatSessionVersion((current) => current + 1);
+    }
+  }
+
+  const appAuth = { ...auth, signOut };
+
   function openTicketDraft(draft = {}) {
     setTicketDraft({ ...defaultTicket, ...draft });
     location.hash = "#submit";
@@ -250,10 +278,10 @@ function App() {
 
   return (
     <div className="product-shell">
-      <Header activeRoute={route} auth={auth} onOpenAuth={() => setAuthOpen(true)} />
+      <Header activeRoute={route} auth={appAuth} onOpenAuth={() => setAuthOpen(true)} />
       {notice ? <button className="global-notice" type="button" onClick={() => setNotice("")}>{notice}</button> : null}
       {route === "admin" ? (
-        <AdminConsole api={api} auth={auth} />
+        <AdminConsole api={api} auth={appAuth} />
       ) : route === "tickets" ? (
         <MyTickets auth={auth} onOpenAuth={() => setAuthOpen(true)} />
       ) : (
@@ -276,7 +304,14 @@ function App() {
               />
             ) : null}
             <section className="assistant-column" id="ava">
-              <ChatPage panelMode="full" auth={auth} onTicketCreated={handleAvaTicketCreated} />
+              <ChatPage
+                key={sessionId}
+                panelMode="full"
+                auth={auth}
+                sessionId={sessionId}
+                onSessionEnded={renewChatSession}
+                onTicketCreated={handleAvaTicketCreated}
+              />
             </section>
           </main>
           <AiNews api={api} />
@@ -607,8 +642,7 @@ function TicketTable({ tickets, manageLink = true }) {
   );
 }
 
-function ChatPage({ panelMode = "full", auth, onTicketCreated }) {
-  const sessionId = useMemo(getSessionId, []);
+function ChatPage({ panelMode = "full", auth, sessionId, onSessionEnded, onTicketCreated }) {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -669,8 +703,7 @@ function ChatPage({ panelMode = "full", auth, onTicketCreated }) {
           source: "system"
         }
       ]);
-      sessionStorage.removeItem("ava-tab-session-id");
-      setNotice("This conversation was saved and memory was cleared.");
+      onSessionEnded?.("This conversation was saved and memory was cleared.");
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -697,8 +730,7 @@ function ChatPage({ panelMode = "full", auth, onTicketCreated }) {
           source: "system"
         }
       ]);
-      sessionStorage.removeItem("ava-tab-session-id");
-      setNotice("The conversation was archived and this tab’s memory was cleared.");
+      onSessionEnded?.("The conversation was archived and this tab’s memory was cleared.");
       window.location.href = result.mailtoUrl;
     } catch (error) {
       throw error;
