@@ -324,14 +324,13 @@ function App() {
 
 function hashToRoute() {
   const hash = location.hash.replace("#", "");
-  if (hash === "dashboard") return "submit";
-  return ["submit", "ava", "tickets", "admin"].includes(hash) ? hash : "submit";
+  if (["dashboard", "ava"].includes(hash)) return "submit";
+  return ["submit", "tickets", "admin"].includes(hash) ? hash : "submit";
 }
 
 function Header({ activeRoute, auth, onOpenAuth }) {
   const navItems = [
     ["submit", "Submit Ticket", "file"],
-    ["ava", "Ask Ava", "chat"],
     ...(auth.profile?.approvalStatus === "approved" && auth.profile?.isActive === true ? [["tickets", "My Tickets", "user"]] : []),
     ...(auth.profile?.role === "admin" && auth.profile?.approvalStatus === "approved" && auth.profile?.isActive === true ? [["admin", "Admin Console", "gear"]] : [])
   ];

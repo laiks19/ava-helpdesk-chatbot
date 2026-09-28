@@ -420,9 +420,13 @@ test("published Sites frontend points API calls to the local Ava server", () => 
 
 test("public app shell exposes ticket submission Ava and role-aware account navigation", async () => {
   const source = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+  const header = source.match(/function Header\([\s\S]*?\nfunction TicketSubmission/)?.[0] || "";
 
   assert.match(source, /Submit Ticket/);
   assert.match(source, /Ask Ava/);
+  assert.doesNotMatch(header, /Ask Ava/);
+  assert.doesNotMatch(header, /\["ava",/);
+  assert.match(source, /\["dashboard", "ava"\]\.includes\(hash\)/);
   assert.match(source, /TicketSubmission/);
   assert.match(source, /ChatPage/);
   assert.match(source, /auth\.profile\?\.role === "admin"/);
