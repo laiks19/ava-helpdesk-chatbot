@@ -13,6 +13,7 @@ import { createHelpdeskStore, shapeTicketCreationResponse } from "./helpdesk-sto
 import { bearerToken, createAuthService } from "./auth-service.js";
 import { createAiNewsStore } from "./ai-news-store.js";
 import { authorizeCron, refreshAiNews } from "./ai-news.js";
+import { runHelpdeskManagerQuery } from "./helpdesk-manager.js";
 import {
   createSupabaseRestClient,
   getSupabaseConfig,
@@ -176,6 +177,16 @@ app.get("/api/admin/dashboard", requireAdmin, asyncRoute(async (req, res) => {
     dateFrom: String(req.query.dateFrom || ""),
     dateTo: String(req.query.dateTo || "")
   }));
+}));
+
+app.post("/api/admin/helpdesk-manager/query", requireAdmin, asyncRoute(async (req, res) => {
+  const result = await runHelpdeskManagerQuery({
+    question: req.body?.question,
+    loadDashboard: () => helpdeskStore.getDashboard(),
+    aiAvailable: hasUsableOpenAiKey(),
+    openAiResponder: queryHelpdeskManagerWithOpenAi
+  });
+  res.status(result.status).json(result.body);
 }));
 
 app.post("/api/admin/tickets", requireAdmin, asyncRoute(async (req, res) => {
@@ -840,6 +851,15 @@ async function summarizeHelpdeskConversation({ name, email, messages }) {
     ]
   });
   return response.output_text || buildHelpdeskSummary({ name, email, messages });
+}
+
+async function queryHelpdeskManagerWithOpenAi({ input }) {
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const response = await client.responses.create({
+    model: getOpenAiModel(),
+    input
+  });
+  return response.output_text || "";
 }
 
 async function summarizeAiNewsWithOpenAi(item) {

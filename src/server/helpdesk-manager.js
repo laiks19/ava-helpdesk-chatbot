@@ -138,6 +138,44 @@ export function buildManagerOpenAiInput({ question, snapshot }) {
   ];
 }
 
+export async function runHelpdeskManagerQuery({
+  question,
+  loadDashboard,
+  aiAvailable,
+  openAiResponder,
+  now = new Date()
+}) {
+  const validation = validateManagerQuestion(question);
+  if (!validation.valid) {
+    return { status: 400, body: { error: validation.error } };
+  }
+
+  const checkedAt = new Date(now).toISOString();
+  const dashboard = await loadDashboard();
+  const alerts = buildHelpdeskAlerts({ tickets: dashboard?.tickets, now: new Date(checkedAt) });
+  const fallbackBody = { alerts, checkedAt };
+
+  if (!aiAvailable || typeof openAiResponder !== "function") {
+    return {
+      status: 503,
+      body: { error: "Helpdesk Manager AI is unavailable. Alerts are still current.", ...fallbackBody }
+    };
+  }
+
+  const snapshot = buildManagerSnapshot({ dashboard, alerts, checkedAt });
+  const input = buildManagerOpenAiInput({ question: validation.question, snapshot });
+  try {
+    const answer = String(await openAiResponder({ question: validation.question, snapshot, input }) || "").trim();
+    if (!answer) throw new Error("Empty manager answer");
+    return { status: 200, body: { answer, ...fallbackBody } };
+  } catch {
+    return {
+      status: 502,
+      body: { error: "Helpdesk Manager could not answer right now. Please try again.", ...fallbackBody }
+    };
+  }
+}
+
 function normalizeTicket(ticket) {
   const status = displayValue(ticket.status, "Open");
   const priority = displayValue(ticket.priority, "Medium");

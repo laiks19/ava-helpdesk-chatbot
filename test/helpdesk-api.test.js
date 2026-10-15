@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { createHelpdeskStore, shapeTicketCreationResponse, toPublicDashboard } from "../src/server/helpdesk-store.js";
 import { createAuthService } from "../src/server/auth-service.js";
+import { runHelpdeskManagerQuery } from "../src/server/helpdesk-manager.js";
 
 const validTicket = {
   requesterName: "Mei Lin",
@@ -179,4 +180,86 @@ test("dashboard route is administrator-only", async () => {
   assert.match(source, /app\.get\("\/api\/admin\/dashboard", requireAdmin/);
   assert.doesNotMatch(source, /app\.get\("\/api\/dashboard"/);
   assert.doesNotMatch(source, /app\.get\("\/api\/tickets"/);
+});
+
+test("protects the helpdesk manager query with requireAdmin", async () => {
+  const source = await readFile(path.join(process.cwd(), "src", "server", "server.js"), "utf8");
+  assert.match(source, /app\.post\("\/api\/admin\/helpdesk-manager\/query", requireAdmin/);
+});
+
+test("uses dashboard reads and never ticket mutation methods", async () => {
+  const source = await readFile(path.join(process.cwd(), "src", "server", "server.js"), "utf8");
+  const routeStart = source.indexOf('app.post("/api/admin/helpdesk-manager/query"');
+  const routeEnd = source.indexOf("app.", routeStart + 10);
+  const managerRoute = source.slice(routeStart, routeEnd);
+
+  assert.match(managerRoute, /helpdeskStore\.getDashboard/);
+  assert.doesNotMatch(managerRoute, /createTicket|updateTicket|deleteTicket/);
+});
+
+test("returns deterministic alerts with OpenAI unavailable and failed responses", async () => {
+  const dashboard = {
+    tickets: [{
+      id: "internal-1",
+      ticketNumber: "HD-2001",
+      subject: "Critical VPN outage",
+      category: "Network",
+      status: "Open",
+      priority: "Critical",
+      caseType: "Major",
+      createdAt: "2026-10-14T00:00:00.000Z",
+      updatedAt: "2026-10-14T00:00:00.000Z",
+      assignedTo: ""
+    }],
+    kpis: {},
+    technicianKpis: []
+  };
+  const now = new Date("2026-10-16T08:00:00.000Z");
+  const unavailable = await runHelpdeskManagerQuery({
+    question: "What is overdue?",
+    loadDashboard: async () => dashboard,
+    aiAvailable: false,
+    now
+  });
+  const failed = await runHelpdeskManagerQuery({
+    question: "What is overdue?",
+    loadDashboard: async () => dashboard,
+    aiAvailable: true,
+    openAiResponder: async () => { throw new Error("provider details must stay private"); },
+    now
+  });
+
+  assert.equal(unavailable.status, 503);
+  assert.match(unavailable.body.error, /unavailable/i);
+  assert.ok(unavailable.body.alerts.length >= 3);
+  assert.equal(unavailable.body.checkedAt, now.toISOString());
+  assert.equal(failed.status, 502);
+  assert.match(failed.body.error, /try again/i);
+  assert.deepEqual(failed.body.alerts, unavailable.body.alerts);
+  assert.equal(JSON.stringify(failed).includes("provider details"), false);
+});
+
+test("sends the bounded manager input to the existing OpenAI model", async () => {
+  let dashboardReads = 0;
+  let responderInput = null;
+  const result = await runHelpdeskManagerQuery({
+    question: "  Summarize open tickets.  ",
+    loadDashboard: async () => {
+      dashboardReads += 1;
+      return { tickets: [], kpis: {}, technicianKpis: [] };
+    },
+    aiAvailable: true,
+    openAiResponder: async (input) => {
+      responderInput = input;
+      return "No open tickets are present in the snapshot.";
+    },
+    now: new Date("2026-10-16T08:00:00.000Z")
+  });
+
+  assert.equal(dashboardReads, 1);
+  assert.equal(responderInput.question, "Summarize open tickets.");
+  assert.deepEqual(responderInput.input.map((message) => message.role), ["system", "user"]);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.answer, "No open tickets are present in the snapshot.");
+  assert.deepEqual(result.body.alerts, []);
 });
