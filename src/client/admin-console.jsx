@@ -237,7 +237,7 @@ export function AdminConsole({ api, auth }) {
         </div>
         {notice ? <p className="notice compact">{notice}</p> : null}
         {tab === "MIS Dashboard" ? <AdminDashboard dashboard={dashboard} /> : null}
-        {tab === "Helpdesk Manager" ? <HelpdeskManager api={api} token={token} tickets={dashboard.tickets || []} /> : null}
+        <div hidden={tab !== "Helpdesk Manager"}><HelpdeskManager api={api} token={token} tickets={dashboard.tickets || []} /></div>
         {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
         {tab === "Technician KPI" ? <TechnicianKpi dashboard={kpiDashboard} filters={kpiFilters} setFilters={setKpiFilters} busy={busy} onApply={applyKpiFilters} onClear={clearKpiFilters} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
@@ -257,6 +257,7 @@ function HelpdeskManager({ api, token, tickets }) {
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
   const [checkedAt, setCheckedAt] = useState(() => new Date().toISOString());
+  const [scope, setScope] = useState(null);
 
   useEffect(() => {
     setAlerts(initialAlerts);
@@ -279,11 +280,13 @@ function HelpdeskManager({ api, token, tickets }) {
       const result = await api.helpdeskManagerQuery(token, submittedQuestion);
       setAlerts(Array.isArray(result.alerts) ? result.alerts : []);
       setCheckedAt(result.checkedAt || new Date().toISOString());
+      setScope(result.scope || null);
       setMessages((current) => [...current, { role: "assistant", content: result.answer, checkedAt: result.checkedAt }]);
       setQuestion("");
     } catch (requestError) {
       if (Array.isArray(requestError.alerts)) setAlerts(requestError.alerts);
       if (requestError.checkedAt) setCheckedAt(requestError.checkedAt);
+      if (requestError.scope) setScope(requestError.scope);
       setError(requestError.message || "Helpdesk Manager AI is unavailable. Alerts are still current.");
     } finally {
       setRequesting(false);
@@ -335,6 +338,7 @@ function HelpdeskManager({ api, token, tickets }) {
             ))}
             {requesting ? <p className="manager-loading">Reviewing current helpdesk data...</p> : null}
           </div>
+          {scope?.truncated ? <p className="manager-scope">This answer's snapshot limited to {scope.includedTicketCount} of {scope.totalTicketCount} tickets.</p> : null}
           {error ? <p className="manager-error" role="alert">{error}</p> : null}
           <form className="manager-composer" onSubmit={submitQuestion}>
             <label htmlFor="manager-question">Manager question</label>

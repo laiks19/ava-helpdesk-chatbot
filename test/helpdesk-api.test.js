@@ -263,3 +263,44 @@ test("sends the bounded manager input to the existing OpenAI model", async () =>
   assert.equal(result.body.answer, "No open tickets are present in the snapshot.");
   assert.deepEqual(result.body.alerts, []);
 });
+
+test("returns deterministic truncation scope with every successful answer", async () => {
+  const tickets = Array.from({ length: 101 }, (_, index) => ({
+    id: `private-${index}`,
+    ticketNumber: `HD-${index}`,
+    subject: "Test",
+    status: "Open",
+    priority: "Low",
+    caseType: "Minor",
+    createdAt: "2026-10-16T07:30:00.000Z",
+    assignedTo: "Aina"
+  }));
+  const result = await runHelpdeskManagerQuery({
+    question: "Summarize the queue.",
+    loadDashboard: async () => ({ tickets }),
+    aiAvailable: true,
+    openAiResponder: async () => "There are 101 tickets.",
+    now: new Date("2026-10-16T08:00:00.000Z")
+  });
+
+  assert.deepEqual(result.body.scope, {
+    truncated: true,
+    includedTicketCount: 100,
+    totalTicketCount: 101
+  });
+});
+
+test("sanitizes dashboard load failures without calling OpenAI", async () => {
+  let openAiCalls = 0;
+  const result = await runHelpdeskManagerQuery({
+    question: "Summarize the queue.",
+    loadDashboard: async () => { throw new Error("relation helpdesk_tickets_secret does not exist"); },
+    aiAvailable: true,
+    openAiResponder: async () => { openAiCalls += 1; return "should not run"; }
+  });
+
+  assert.equal(result.status, 500);
+  assert.deepEqual(result.body, { error: "Helpdesk data could not be loaded. Please try again." });
+  assert.equal(openAiCalls, 0);
+  assert.equal(JSON.stringify(result).includes("helpdesk_tickets_secret"), false);
+});

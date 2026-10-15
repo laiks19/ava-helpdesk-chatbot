@@ -16,10 +16,10 @@ export function buildHelpdeskAlerts({ tickets = [], now = new Date() }) {
   if (currentTime === null) return [];
 
   const alerts = [];
-  for (const ticket of tickets) {
+  for (const [ticketIndex, ticket] of tickets.entries()) {
     if (ticket?.deletedAt || !isUnresolved(ticket?.status)) continue;
 
-    const normalized = normalizeTicket(ticket);
+    const normalized = normalizeTicket(ticket, `Unknown ticket ${ticketIndex + 1}`);
     const ageHours = elapsedHours(ticket.createdAt, currentTime);
     const stalledSource = hasValue(ticket.updatedAt) ? ticket.updatedAt : ticket.createdAt;
     const stalledHours = elapsedHours(stalledSource, currentTime);
@@ -82,9 +82,11 @@ export function buildHelpdeskAlerts({ tickets = [], now = new Date() }) {
 export function buildManagerSnapshot({ dashboard = {}, alerts = [], checkedAt, maxTickets = 100 }) {
   const sourceTickets = Array.isArray(dashboard.tickets) ? dashboard.tickets : [];
   const alertReasons = groupAlertReasons(alerts);
-  const sortedTickets = [...sourceTickets]
-    .filter((ticket) => !ticket?.deletedAt)
-    .sort(compareSnapshotTickets);
+  const checkedTimestamp = toTimestamp(checkedAt) ?? Date.now();
+  const sortedTickets = sourceTickets
+    .map((ticket, index) => ({ ticket, fallbackNumber: `Unknown ticket ${index + 1}` }))
+    .filter(({ ticket }) => !ticket?.deletedAt)
+    .sort((left, right) => compareSnapshotTickets(left.ticket, right.ticket, checkedTimestamp));
   const safeLimit = Math.max(1, Math.floor(Number(maxTickets) || 100));
   const includedTickets = sortedTickets.slice(0, safeLimit);
 
@@ -95,20 +97,20 @@ export function buildManagerSnapshot({ dashboard = {}, alerts = [], checkedAt, m
     totalTicketCount: sortedTickets.length,
     summary: sanitizeSummary(dashboard.kpis),
     technicianKpis: sanitizeTechnicianKpis(dashboard.technicianKpis),
-    tickets: includedTickets.map((ticket) => ({
-      ticketNumber: displayValue(ticket.ticketNumber || ticket.id, "Unknown ticket"),
+    tickets: includedTickets.map(({ ticket, fallbackNumber }) => ({
+      ticketNumber: displayValue(ticket.ticketNumber, fallbackNumber),
       subject: displayValue(ticket.subject, "No subject"),
       category: displayValue(ticket.category, "Uncategorized"),
       status: displayValue(ticket.status, "Open"),
       priority: displayValue(ticket.priority, "Medium"),
       caseType: displayValue(ticket.caseType, "Unclassified"),
-      createdAt: normalizeIsoDate(ticket.createdAt),
-      updatedAt: normalizeIsoDate(ticket.updatedAt),
-      closedAt: normalizeIsoDate(ticket.closedAt),
+      createdAt: normalizeIsoDate(ticket.createdAt, checkedTimestamp),
+      updatedAt: normalizeIsoDate(ticket.updatedAt, checkedTimestamp),
+      closedAt: normalizeIsoDate(ticket.closedAt, checkedTimestamp),
       technicianName: displayValue(ticket.assignedTo, "Unassigned"),
       department: displayValue(ticket.department, ""),
       location: displayValue(ticket.location, ""),
-      alertReasons: alertReasons.get(displayValue(ticket.ticketNumber || ticket.id, "Unknown ticket")) || []
+      alertReasons: alertReasons.get(displayValue(ticket.ticketNumber, fallbackNumber)) || []
     }))
   };
 }
@@ -151,9 +153,20 @@ export async function runHelpdeskManagerQuery({
   }
 
   const checkedAt = new Date(now).toISOString();
-  const dashboard = await loadDashboard();
+  let dashboard;
+  try {
+    dashboard = await loadDashboard();
+  } catch {
+    return { status: 500, body: { error: "Helpdesk data could not be loaded. Please try again." } };
+  }
   const alerts = buildHelpdeskAlerts({ tickets: dashboard?.tickets, now: new Date(checkedAt) });
-  const fallbackBody = { alerts, checkedAt };
+  const snapshot = buildManagerSnapshot({ dashboard, alerts, checkedAt });
+  const scope = {
+    truncated: snapshot.truncated,
+    includedTicketCount: snapshot.includedTicketCount,
+    totalTicketCount: snapshot.totalTicketCount
+  };
+  const fallbackBody = { alerts, checkedAt, scope };
 
   if (!aiAvailable || typeof openAiResponder !== "function") {
     return {
@@ -162,7 +175,6 @@ export async function runHelpdeskManagerQuery({
     };
   }
 
-  const snapshot = buildManagerSnapshot({ dashboard, alerts, checkedAt });
   const input = buildManagerOpenAiInput({ question: validation.question, snapshot });
   try {
     const answer = String(await openAiResponder({ question: validation.question, snapshot, input }) || "").trim();
@@ -176,12 +188,12 @@ export async function runHelpdeskManagerQuery({
   }
 }
 
-function normalizeTicket(ticket) {
+function normalizeTicket(ticket, fallbackNumber = "Unknown ticket") {
   const status = displayValue(ticket.status, "Open");
   const priority = displayValue(ticket.priority, "Medium");
   const caseType = displayValue(ticket.caseType, "Unclassified");
   return {
-    ticketNumber: displayValue(ticket.ticketNumber || ticket.id, "Unknown ticket"),
+    ticketNumber: displayValue(ticket.ticketNumber, fallbackNumber),
     subject: displayValue(ticket.subject, "No subject"),
     technicianName: displayValue(ticket.assignedTo, "Unassigned"),
     status,
@@ -207,16 +219,19 @@ function groupAlertReasons(alerts) {
   return grouped;
 }
 
-function compareSnapshotTickets(left, right) {
+function compareSnapshotTickets(left, right, checkedTimestamp) {
   const leftResolved = isUnresolved(left?.status) ? 0 : 1;
   const rightResolved = isUnresolved(right?.status) ? 0 : 1;
   return leftResolved - rightResolved
-    || snapshotTimestamp(right) - snapshotTimestamp(left)
-    || displayValue(left?.ticketNumber || left?.id, "").localeCompare(displayValue(right?.ticketNumber || right?.id, ""));
+    || snapshotTimestamp(right, checkedTimestamp) - snapshotTimestamp(left, checkedTimestamp)
+    || displayValue(left?.ticketNumber, "").localeCompare(displayValue(right?.ticketNumber, ""));
 }
 
-function snapshotTimestamp(ticket) {
-  return toTimestamp(ticket?.updatedAt) ?? toTimestamp(ticket?.createdAt) ?? Number.NEGATIVE_INFINITY;
+function snapshotTimestamp(ticket, checkedTimestamp) {
+  const updatedAt = toTimestamp(ticket?.updatedAt);
+  if (updatedAt !== null && updatedAt <= checkedTimestamp) return updatedAt;
+  const createdAt = toTimestamp(ticket?.createdAt);
+  return createdAt !== null && createdAt <= checkedTimestamp ? createdAt : Number.NEGATIVE_INFINITY;
 }
 
 function sanitizeSummary(kpis = {}) {
@@ -260,9 +275,11 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function normalizeIsoDate(value) {
+function normalizeIsoDate(value, maximumTimestamp = null) {
   const timestamp = toTimestamp(value);
-  return timestamp === null ? null : new Date(timestamp).toISOString();
+  return timestamp === null || (maximumTimestamp !== null && timestamp > maximumTimestamp)
+    ? null
+    : new Date(timestamp).toISOString();
 }
 
 function createAlert(ticket, details) {

@@ -186,6 +186,7 @@ async function request(url, options = {}) {
     error.profile = payload.profile;
     error.alerts = payload.alerts;
     error.checkedAt = payload.checkedAt;
+    error.scope = payload.scope;
     throw error;
   }
   return payload;

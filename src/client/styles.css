@@ -2090,6 +2090,15 @@ select:disabled {
   font-size: 12px;
 }
 
+.manager-scope {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #2d7e95;
+  background: #eef8fa;
+  color: #185f73;
+  font-size: 12px;
+}
+
 .manager-composer {
   display: grid;
   gap: 7px;

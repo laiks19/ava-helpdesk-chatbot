@@ -586,6 +586,7 @@ test("preserves manager alerts on API errors", async () => {
 
   assert.match(mainSource, /error\.alerts = payload\.alerts/);
   assert.match(mainSource, /error\.checkedAt = payload\.checkedAt/);
+  assert.match(mainSource, /error\.scope = payload\.scope/);
 });
 
 test("adds the admin only Helpdesk Manager tab and alert states", async () => {
@@ -608,6 +609,14 @@ test("blocks duplicate manager submissions while busy", async () => {
 
   assert.match(adminSource, /if \(requesting \|\| !question\.trim\(\)\) return/);
   assert.match(adminSource, /disabled=\{requesting/);
+});
+
+test("keeps the Helpdesk Manager mounted while switching admin tabs", async () => {
+  const adminSource = await readFile(new URL("../src/client/admin-console.jsx", import.meta.url), "utf8");
+
+  assert.match(adminSource, /hidden=\{tab !== "Helpdesk Manager"\}/);
+  assert.doesNotMatch(adminSource, /tab === "Helpdesk Manager" \? <HelpdeskManager/);
+  assert.match(adminSource, /snapshot limited to/);
 });
 
 test("client exposes Supabase accounts full admin tools technician KPI and Ava intake", async () => {

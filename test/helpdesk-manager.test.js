@@ -113,6 +113,7 @@ test("ignores invalid and future timestamps for age based alerts", () => {
 
 test("builds an allowlisted snapshot without requester or database identifiers", () => {
   const sourceTicket = ticket({
+    ticketNumber: undefined,
     requesterName: "Private Person",
     requesterEmail: "private@example.com",
     email: "private@example.com",
@@ -135,12 +136,30 @@ test("builds an allowlisted snapshot without requester or database identifiers",
     "ticketNumber", "subject", "category", "status", "priority", "caseType",
     "createdAt", "updatedAt", "closedAt", "technicianName", "department", "location", "alertReasons"
   ]);
+  assert.equal(snapshot.tickets[0].ticketNumber, "Unknown ticket 1");
   const serialized = JSON.stringify(snapshot);
   assert.equal(serialized.includes("internal-1"), false);
   assert.equal(serialized.includes("Private Person"), false);
   assert.equal(serialized.includes("private@example.com"), false);
   assert.equal(serialized.includes("tech-secret-id"), false);
   assert.equal(serialized.includes("Internal-only note"), false);
+});
+
+test("keeps future-dated tickets but removes future chronology from the snapshot", () => {
+  const snapshot = buildManagerSnapshot({
+    dashboard: {
+      tickets: [
+        ticket({ ticketNumber: "FUTURE", createdAt: "2026-10-17T08:00:00.000Z", updatedAt: "2026-10-17T08:00:00.000Z" }),
+        ticket({ ticketNumber: "CURRENT", createdAt: "2026-10-16T07:00:00.000Z", updatedAt: "2026-10-16T07:30:00.000Z" })
+      ]
+    },
+    alerts: [],
+    checkedAt: NOW.toISOString()
+  });
+
+  assert.deepEqual(snapshot.tickets.map((item) => item.ticketNumber), ["CURRENT", "FUTURE"]);
+  assert.equal(snapshot.tickets[1].createdAt, null);
+  assert.equal(snapshot.tickets[1].updatedAt, null);
 });
 
 test("orders active tickets before resolved tickets and truncates at 100", () => {
