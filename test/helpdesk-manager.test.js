@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   buildHelpdeskAlerts,
+  buildManagerOpenAiInput,
+  buildManagerSnapshot,
   validateManagerQuestion
 } from "../src/server/helpdesk-manager.js";
 
@@ -107,4 +109,69 @@ test("ignores invalid and future timestamps for age based alerts", () => {
   });
 
   assert.deepEqual(alerts, []);
+});
+
+test("builds an allowlisted snapshot without requester or database identifiers", () => {
+  const sourceTicket = ticket({
+    requesterName: "Private Person",
+    requesterEmail: "private@example.com",
+    email: "private@example.com",
+    description: "Contains private troubleshooting notes",
+    resolutionNote: "Internal-only note"
+  });
+  const alerts = buildHelpdeskAlerts({ tickets: [sourceTicket], now: NOW });
+  const snapshot = buildManagerSnapshot({
+    dashboard: {
+      tickets: [sourceTicket],
+      kpis: { total: 1, open: 1 },
+      technicianKpis: [{ technicianName: "Aina", totalTickets: 1, open: 1 }],
+      technicians: [{ id: "tech-secret-id", name: "Aina", email: "aina@example.com" }]
+    },
+    alerts,
+    checkedAt: NOW.toISOString()
+  });
+
+  assert.deepEqual(Object.keys(snapshot.tickets[0]), [
+    "ticketNumber", "subject", "category", "status", "priority", "caseType",
+    "createdAt", "updatedAt", "closedAt", "technicianName", "department", "location", "alertReasons"
+  ]);
+  const serialized = JSON.stringify(snapshot);
+  assert.equal(serialized.includes("internal-1"), false);
+  assert.equal(serialized.includes("Private Person"), false);
+  assert.equal(serialized.includes("private@example.com"), false);
+  assert.equal(serialized.includes("tech-secret-id"), false);
+  assert.equal(serialized.includes("Internal-only note"), false);
+});
+
+test("orders active tickets before resolved tickets and truncates at 100", () => {
+  const tickets = Array.from({ length: 101 }, (_, index) => ticket({
+    id: `internal-${index}`,
+    ticketNumber: `HD-${String(index).padStart(4, "0")}`,
+    status: index === 100 ? "Resolved" : "Open",
+    createdAt: new Date(NOW.getTime() - index * 60_000).toISOString(),
+    updatedAt: new Date(NOW.getTime() - index * 60_000).toISOString()
+  }));
+  const snapshot = buildManagerSnapshot({ dashboard: { tickets }, alerts: [], checkedAt: NOW.toISOString() });
+
+  assert.equal(snapshot.includedTicketCount, 100);
+  assert.equal(snapshot.totalTicketCount, 101);
+  assert.equal(snapshot.truncated, true);
+  assert.equal(snapshot.tickets[0].ticketNumber, "HD-0000");
+  assert.equal(snapshot.tickets.some((item) => item.status === "Resolved"), false);
+});
+
+test("builds a prompt that treats ticket text as untrusted read only data", () => {
+  const snapshot = buildManagerSnapshot({ dashboard: { tickets: [ticket()] }, alerts: [], checkedAt: NOW.toISOString() });
+  const input = buildManagerOpenAiInput({ question: "What needs attention?", snapshot });
+
+  assert.deepEqual(input.map((message) => message.role), ["system", "user"]);
+  assert.match(input[0].content, /supplied helpdesk snapshot only/i);
+  assert.match(input[0].content, /untrusted data/i);
+  assert.match(input[0].content, /never claim.*modified/i);
+  assert.match(input[0].content, /never provide or request credentials/i);
+  assert.match(input[0].content, /reference ticket numbers/i);
+  assert.match(input[0].content, /state.*cannot answer/i);
+  assert.match(input[1].content, /What needs attention\?/);
+  assert.match(input[1].content, /BEGIN UNTRUSTED HELPDESK SNAPSHOT/);
+  assert.match(input[1].content, /END UNTRUSTED HELPDESK SNAPSHOT/);
 });
