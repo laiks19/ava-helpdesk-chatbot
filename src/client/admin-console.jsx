@@ -1,7 +1,22 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { buildClientManagerAlerts } from "./helpdesk-manager.js";
 
-const adminOnlyTabs = ["MIS Dashboard", "Tickets", "Technician KPI", "Users", "Technicians", "Ava Knowledge", "Security"];
+const adminOnlyTabs = ["MIS Dashboard", "Helpdesk Manager", "Tickets", "Technician KPI", "Users", "Technicians", "Ava Knowledge", "Security"];
 const statuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
+const managerSuggestions = [
+  "How many tickets are overdue?",
+  "Show all unassigned tickets.",
+  "Which technician has the most open tickets?",
+  "Summarize Major cases that are still unresolved.",
+  "What should I prioritize today?"
+];
+const managerAlertLabels = {
+  minor_sla_overdue: "Minor SLA overdue",
+  major_sla_overdue: "Major SLA overdue",
+  high_priority_unresolved: "High-priority unresolved",
+  unassigned: "Unassigned ticket",
+  stalled_in_progress: "Stalled In Progress"
+};
 const emptyTicket = {
   requesterName: "",
   email: "",
@@ -222,6 +237,7 @@ export function AdminConsole({ api, auth }) {
         </div>
         {notice ? <p className="notice compact">{notice}</p> : null}
         {tab === "MIS Dashboard" ? <AdminDashboard dashboard={dashboard} /> : null}
+        {tab === "Helpdesk Manager" ? <HelpdeskManager api={api} token={token} tickets={dashboard.tickets || []} /> : null}
         {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
         {tab === "Technician KPI" ? <TechnicianKpi dashboard={kpiDashboard} filters={kpiFilters} setFilters={setKpiFilters} busy={busy} onApply={applyKpiFilters} onClear={clearKpiFilters} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
@@ -230,6 +246,104 @@ export function AdminConsole({ api, auth }) {
         {tab === "Security" ? <SecurityAdmin auth={auth} busy={busy} run={run} /> : null}
       </section>
     </main>
+  );
+}
+
+function HelpdeskManager({ api, token, tickets }) {
+  const initialAlerts = useMemo(() => buildClientManagerAlerts(tickets), [tickets]);
+  const [alerts, setAlerts] = useState(initialAlerts);
+  const [question, setQuestion] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [requesting, setRequesting] = useState(false);
+  const [error, setError] = useState("");
+  const [checkedAt, setCheckedAt] = useState(() => new Date().toISOString());
+
+  useEffect(() => {
+    setAlerts(initialAlerts);
+    setCheckedAt(new Date().toISOString());
+  }, [initialAlerts]);
+
+  const counts = alerts.reduce((summary, alert) => {
+    summary[alert.severity] = (summary[alert.severity] || 0) + 1;
+    return summary;
+  }, { Critical: 0, High: 0, Medium: 0 });
+
+  async function submitQuestion(event) {
+    event.preventDefault();
+    if (requesting || !question.trim()) return;
+    const submittedQuestion = question.trim();
+    setRequesting(true);
+    setError("");
+    setMessages((current) => [...current, { role: "manager", content: submittedQuestion }]);
+    try {
+      const result = await api.helpdeskManagerQuery(token, submittedQuestion);
+      setAlerts(Array.isArray(result.alerts) ? result.alerts : []);
+      setCheckedAt(result.checkedAt || new Date().toISOString());
+      setMessages((current) => [...current, { role: "assistant", content: result.answer, checkedAt: result.checkedAt }]);
+      setQuestion("");
+    } catch (requestError) {
+      if (Array.isArray(requestError.alerts)) setAlerts(requestError.alerts);
+      if (requestError.checkedAt) setCheckedAt(requestError.checkedAt);
+      setError(requestError.message || "Helpdesk Manager AI is unavailable. Alerts are still current.");
+    } finally {
+      setRequesting(false);
+    }
+  }
+
+  return (
+    <section className="admin-section manager-workspace">
+      <div className="admin-section-title manager-title">
+        <div><h2>Helpdesk Manager</h2><p>Review active alerts and ask read-only questions about current ticket status.</p></div>
+        <span>Checked {formatManagerTime(checkedAt)}</span>
+      </div>
+
+      <div className="manager-alert-summary" aria-label="Helpdesk alert severity summary">
+        <strong>{alerts.length}<small>Attention alerts</small></strong>
+        {Object.entries(counts).map(([severity, count]) => <span className={`manager-severity ${severity.toLowerCase()}`} key={severity}>{severity}<b>{count}</b></span>)}
+      </div>
+
+      <div className="manager-layout">
+        <section className="manager-alerts" aria-labelledby="manager-alerts-title">
+          <div className="manager-pane-heading"><h3 id="manager-alerts-title">Helpdesk alerts</h3><span>Highest severity first</span></div>
+          {alerts.length ? (
+            <div className="manager-alert-list">
+              {alerts.map((alert) => (
+                <article className={`manager-alert ${alert.severity.toLowerCase()}`} key={alert.id}>
+                  <div className="manager-alert-heading"><span>{alert.severity}</span><strong>{managerAlertLabels[alert.rule] || "Attention required"}</strong></div>
+                  <h4>{alert.ticketNumber} · {alert.subject}</h4>
+                  <p>{alert.reason}</p>
+                  <small>{alert.technicianName || "Unassigned"} · {alert.status} · {alert.priority} · {alert.caseType}</small>
+                </article>
+              ))}
+            </div>
+          ) : <p className="manager-healthy">No helpdesk alerts need attention.</p>}
+        </section>
+
+        <section className="manager-query" aria-labelledby="manager-query-title">
+          <div className="manager-pane-heading"><h3 id="manager-query-title">Ask about current helpdesk status</h3><span>Read-only analysis</span></div>
+          <div className="manager-suggestions" aria-label="Suggested questions">
+            {managerSuggestions.map((suggestion) => <button type="button" onClick={() => setQuestion(suggestion)} disabled={requesting} key={suggestion}>{suggestion}</button>)}
+          </div>
+          <div className="manager-transcript" aria-live="polite">
+            {!messages.length ? <p>Ask for ticket counts, technician workload, overdue cases, or today's priorities.</p> : null}
+            {messages.map((message, index) => (
+              <div className={`manager-message ${message.role}`} key={`${message.role}-${index}`}>
+                <strong>{message.role === "assistant" ? "Manager analysis" : "You"}</strong>
+                <p>{message.content}</p>
+                {message.checkedAt ? <small>Data checked {formatManagerTime(message.checkedAt)}</small> : null}
+              </div>
+            ))}
+            {requesting ? <p className="manager-loading">Reviewing current helpdesk data...</p> : null}
+          </div>
+          {error ? <p className="manager-error" role="alert">{error}</p> : null}
+          <form className="manager-composer" onSubmit={submitQuestion}>
+            <label htmlFor="manager-question">Manager question</label>
+            <textarea id="manager-question" maxLength="1000" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about overdue, unassigned, Major, or technician tickets..." disabled={requesting} />
+            <div><span>{question.length} / 1,000</span><button className="primary-button" type="submit" disabled={requesting || !question.trim()}>{requesting ? "Checking..." : "Send"}</button></div>
+          </form>
+        </section>
+      </div>
+    </section>
   );
 }
 
@@ -470,4 +584,9 @@ function SecurityAdmin({ auth, busy, run }) {
 
 function slug(value = "") {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function formatManagerTime(value) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : "not available";
 }

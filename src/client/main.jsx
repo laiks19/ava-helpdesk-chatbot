@@ -63,6 +63,13 @@ const api = {
   async adminDashboard(token, filters = {}) {
     return request(buildAdminDashboardPath(filters), { headers: authHeaders(token) });
   },
+  async helpdeskManagerQuery(token, question) {
+    return request("/api/admin/helpdesk-manager/query", {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ question })
+    });
+  },
   async adminCreateTicket(token, ticket) {
     return request("/api/admin/tickets", { method: "POST", headers: authHeaders(token), body: JSON.stringify(ticket) });
   },
@@ -177,6 +184,8 @@ async function request(url, options = {}) {
     const error = new Error(payload.error || "Request failed");
     error.status = response.status;
     error.profile = payload.profile;
+    error.alerts = payload.alerts;
+    error.checkedAt = payload.checkedAt;
     throw error;
   }
   return payload;

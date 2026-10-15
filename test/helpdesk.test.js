@@ -45,6 +45,8 @@ import {
   getChatSessionId,
   peekChatSessionId
 } from "../src/client/api-base.js";
+import { buildClientManagerAlerts } from "../src/client/helpdesk-manager.js";
+import { buildHelpdeskAlerts } from "../src/server/helpdesk-manager.js";
 
 function createMemoryStorage() {
   const values = new Map();
@@ -550,6 +552,62 @@ test("Admin console keeps login private and manages Ava knowledge", async () => 
   assert.doesNotMatch(source, /placeholder="admin123"/);
   assert.match(source, /deletePdf/);
   assert.match(source, /Delete/);
+});
+
+test("client alert preview matches the server Helpdesk Manager rules", () => {
+  const now = new Date("2026-10-16T08:00:00.000Z");
+  const tickets = [{
+    id: "internal-1",
+    ticketNumber: "HD-3001",
+    subject: "Finance system outage",
+    category: "Software",
+    status: "In Progress",
+    priority: "Critical",
+    caseType: "Major",
+    createdAt: "2026-10-14T00:00:00.000Z",
+    updatedAt: "2026-10-14T00:00:00.000Z",
+    assignedTo: ""
+  }];
+
+  assert.deepEqual(buildClientManagerAlerts(tickets, now), buildHelpdeskAlerts({ tickets, now }));
+});
+
+test("exposes an authenticated helpdesk manager API method", async () => {
+  const mainSource = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+
+  assert.match(mainSource, /helpdeskManagerQuery\(token, question\)/);
+  assert.match(mainSource, /\/api\/admin\/helpdesk-manager\/query/);
+  assert.match(mainSource, /headers: authHeaders\(token\)/);
+  assert.match(mainSource, /JSON\.stringify\(\{ question \}\)/);
+});
+
+test("preserves manager alerts on API errors", async () => {
+  const mainSource = await readFile(new URL("../src/client/main.jsx", import.meta.url), "utf8");
+
+  assert.match(mainSource, /error\.alerts = payload\.alerts/);
+  assert.match(mainSource, /error\.checkedAt = payload\.checkedAt/);
+});
+
+test("adds the admin only Helpdesk Manager tab and alert states", async () => {
+  const adminSource = await readFile(new URL("../src/client/admin-console.jsx", import.meta.url), "utf8");
+
+  assert.match(adminSource, /adminOnlyTabs = \[[^\]]*"Helpdesk Manager"/);
+  assert.match(adminSource, /minor_sla_overdue/);
+  assert.match(adminSource, /major_sla_overdue/);
+  assert.match(adminSource, /high_priority_unresolved/);
+  assert.match(adminSource, /unassigned/);
+  assert.match(adminSource, /stalled_in_progress/);
+  assert.match(adminSource, /No helpdesk alerts need attention/);
+  assert.match(adminSource, /Ask about current helpdesk status/);
+  assert.match(adminSource, /Helpdesk Manager AI is unavailable/);
+  assert.match(adminSource, /aria-live="polite"/);
+});
+
+test("blocks duplicate manager submissions while busy", async () => {
+  const adminSource = await readFile(new URL("../src/client/admin-console.jsx", import.meta.url), "utf8");
+
+  assert.match(adminSource, /if \(requesting \|\| !question\.trim\(\)\) return/);
+  assert.match(adminSource, /disabled=\{requesting/);
 });
 
 test("client exposes Supabase accounts full admin tools technician KPI and Ava intake", async () => {
