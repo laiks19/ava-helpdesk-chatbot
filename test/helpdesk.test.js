@@ -30,6 +30,7 @@ import {
   deleteHelpdeskTicket,
   formatTicketNumber,
   filterTicketsByCreatedDateRange,
+  filterTicketsByAssignedDateRange,
   summarizeTicketKpis,
   summarizeTechnicianKpis,
   validateKpiSettings,
@@ -812,8 +813,10 @@ test("profile and technician input normalize access and assignment data", () => 
 
   assert.deepEqual(validateTechnicianInput({ name: " Alex Tan ", email: " ALEX@example.com " }), {
     valid: true,
-    technician: { name: "Alex Tan", email: "alex@example.com", isActive: true }
+    technician: { name: "Alex Tan", email: "alex@example.com", isActive: true, isAvailable: true }
   });
+  assert.equal(validateTechnicianInput({ name: "Nadia Lee", isAvailable: false }).technician.isAvailable, false);
+  assert.equal(validateTechnicianInput({ name: "Inactive Tech", isActive: false, isAvailable: true }).technician.isAvailable, false);
   assert.equal(validateTechnicianInput({ name: "", email: "bad" }).valid, false);
 });
 
@@ -848,6 +851,42 @@ test("ticket lifecycle supports assignment reopening and soft deletion", () => {
   assert.equal(reopened.closedAt, "");
   assert.equal(deleted.deletedAt, "2026-09-25T05:00:00.000Z");
   assert.equal(deleted.deletedBy, "admin-1");
+});
+
+test("ticket assignment date follows the current technician assignment", () => {
+  const created = createHelpdeskTicket({
+    sequence: 9,
+    now: new Date("2026-09-25T01:00:00.000Z"),
+    input: {
+      requesterName: "Mei Lin",
+      email: "mei@example.com",
+      category: "Hardware",
+      priority: "High",
+      subject: "Laptop screen is black",
+      description: "The screen remains black after restart."
+    }
+  });
+  const assigned = updateHelpdeskTicket(created, {
+    assignedTechnicianId: "tech-1",
+    assignedTo: "Alex Tan"
+  }, new Date("2026-09-25T02:00:00.000Z"));
+  const edited = updateHelpdeskTicket(assigned, {
+    priority: "Medium"
+  }, new Date("2026-09-25T03:00:00.000Z"));
+  const reassigned = updateHelpdeskTicket(edited, {
+    assignedTechnicianId: "tech-2",
+    assignedTo: "Nadia Lee"
+  }, new Date("2026-09-25T04:00:00.000Z"));
+  const unassigned = updateHelpdeskTicket(reassigned, {
+    assignedTechnicianId: "",
+    assignedTo: ""
+  }, new Date("2026-09-25T05:00:00.000Z"));
+
+  assert.equal(created.assignedAt, "");
+  assert.equal(assigned.assignedAt, "2026-09-25T02:00:00.000Z");
+  assert.equal(edited.assignedAt, "2026-09-25T02:00:00.000Z");
+  assert.equal(reassigned.assignedAt, "2026-09-25T04:00:00.000Z");
+  assert.equal(unassigned.assignedAt, "");
 });
 
 test("technician KPI groups open in-progress and closed tickets by assignee", () => {
@@ -885,11 +924,11 @@ test("technician KPI groups open in-progress and closed tickets by assignee", ()
 test("technician KPI measures Minor and Major achievements against all assigned tickets", () => {
   const technicians = [{ id: "tech-1", name: "Alex Tan" }];
   const tickets = [
-    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T04:00:00.000Z", status: "Closed" },
-    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T06:00:00.000Z", status: "Closed" },
-    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "", status: "Open" },
-    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-09-23T00:00:00.000Z", closedAt: "2026-09-24T12:00:00.000Z", status: "Closed" },
-    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-09-23T00:00:00.000Z", closedAt: "2026-09-24T13:00:00.000Z", status: "Closed" }
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", assignedAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T04:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", assignedAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T06:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", assignedAt: "2026-09-25T00:00:00.000Z", closedAt: "", status: "Open" },
+    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-09-23T00:00:00.000Z", assignedAt: "2026-09-23T00:00:00.000Z", closedAt: "2026-09-24T12:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-09-23T00:00:00.000Z", assignedAt: "2026-09-23T00:00:00.000Z", closedAt: "2026-09-24T13:00:00.000Z", status: "Closed" }
   ];
 
   const [row] = summarizeTechnicianKpis({ tickets, technicians });
@@ -900,13 +939,31 @@ test("technician KPI measures Minor and Major achievements against all assigned 
   assert.equal(row.averageResolutionHours, 21);
 });
 
+test("technician KPI timing starts from the assigned date", () => {
+  const [row] = summarizeTechnicianKpis({
+    technicians: [{ id: "tech-1", name: "Alex Tan" }],
+    tickets: [{
+      assignedTechnicianId: "tech-1",
+      caseType: "Minor",
+      createdAt: "2026-09-24T00:00:00.000Z",
+      assignedAt: "2026-09-25T00:00:00.000Z",
+      closedAt: "2026-09-25T04:00:00.000Z",
+      status: "Closed"
+    }]
+  });
+
+  assert.equal(row.minor.achieved, 1);
+  assert.equal(row.minor.kpiPercent, 100);
+  assert.equal(row.averageResolutionHours, 4);
+});
+
 test("technician KPI reports a live breakdown for late and overdue tickets", () => {
   const [row] = summarizeTechnicianKpis({
     technicians: [{ id: "tech-1", name: "Alex Tan" }],
     tickets: [
-      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T04:00:00.000Z", status: "Closed" },
-      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T06:00:00.000Z", status: "Closed" },
-      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "", status: "Open" }
+      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", assignedAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T04:00:00.000Z", status: "Closed" },
+      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", assignedAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T06:00:00.000Z", status: "Closed" },
+      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", assignedAt: "2026-09-25T00:00:00.000Z", closedAt: "", status: "Open" }
     ],
     now: new Date("2026-09-25T07:00:00.000Z")
   });
@@ -924,8 +981,8 @@ test("technician KPI reports a live breakdown for late and overdue tickets", () 
 test("technician KPI uses administrator-configured Minor and Major target hours", () => {
   const technicians = [{ id: "tech-1", name: "Alex Tan" }];
   const tickets = [
-    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-01-02T00:00:00.000Z", closedAt: "2026-01-02T06:00:00.000Z", status: "Closed" },
-    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-01-02T00:00:00.000Z", closedAt: "2026-01-03T16:00:00.000Z", status: "Closed" }
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-01-02T00:00:00.000Z", assignedAt: "2026-01-02T00:00:00.000Z", closedAt: "2026-01-02T06:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-01-02T00:00:00.000Z", assignedAt: "2026-01-02T00:00:00.000Z", closedAt: "2026-01-03T16:00:00.000Z", status: "Closed" }
   ];
 
   const [defaultRow] = summarizeTechnicianKpis({ tickets, technicians });
@@ -1025,6 +1082,22 @@ test("ticket date range supports an open start or end date", () => {
   );
 });
 
+test("KPI ticket date range uses the technician assigned date", () => {
+  const tickets = [
+    { id: "created-in-range", createdAt: "2026-09-15T03:00:00.000Z", assignedAt: "2026-10-01T00:00:00.000Z" },
+    { id: "assigned-in-range", createdAt: "2026-08-15T03:00:00.000Z", assignedAt: "2026-09-15T03:00:00.000Z" },
+    { id: "unassigned", createdAt: "2026-09-15T03:00:00.000Z", assignedAt: "" }
+  ];
+
+  const filtered = filterTicketsByAssignedDateRange({
+    tickets,
+    dateFrom: "2026-09-01",
+    dateTo: "2026-09-30"
+  });
+
+  assert.deepEqual(filtered.map((ticket) => ticket.id), ["assigned-in-range"]);
+});
+
 test("admin dashboard URL carries only active ticket date filters", async () => {
   const apiBase = await import("../src/client/api-base.js");
 
@@ -1048,7 +1121,10 @@ test("admin UI owns case classification and exposes a Technician KPI tab", async
   assert.match(adminSource, /Minor KPI/);
   assert.match(adminSource, /Major KPI/);
   assert.match(adminSource, /Opened Date/);
+  assert.match(adminSource, /Assigned Date/);
   assert.match(adminSource, /Closed Date/);
+  assert.match(adminSource, /Assignment date from/);
+  assert.match(adminSource, /Available for Auto Assignment/);
   assert.match(adminSource, /KPI Settings/);
   assert.match(adminSource, /adminUpdateKpiSettings/);
   assert.match(adminSource, /const appliedSettings = dashboard\.kpiSettings/);

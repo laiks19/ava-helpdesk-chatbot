@@ -156,6 +156,17 @@ export function AdminConsole({ api, auth }) {
     }, technicianEditor.id ? "Technician updated." : "Technician added.");
   }
 
+  async function toggleTechnicianAvailability(technician) {
+    await run(async () => {
+      const result = await api.adminUpdateTechnician(token, technician.id, {
+        isAvailable: !technician.isAvailable
+      });
+      setTechnicians(result.technicians || []);
+      setDashboard(await api.adminDashboard(token));
+      setKpiDashboard(await api.adminDashboard(token, appliedKpiFilters));
+    }, `${technician.name} is now ${technician.isAvailable ? "unavailable" : "available"} for automatic assignment.`);
+  }
+
   async function deleteTechnician(technician) {
     if (!window.confirm(`Remove ${technician.name} from active assignment choices?`)) return;
     await run(async () => {
@@ -187,7 +198,7 @@ export function AdminConsole({ api, auth }) {
   async function applyKpiFilters(event) {
     event.preventDefault();
     if (kpiFilters.dateFrom && kpiFilters.dateTo && kpiFilters.dateFrom > kpiFilters.dateTo) {
-      setNotice("Ticket date from must be before or the same as ticket date to.");
+      setNotice("Assignment date from must be before or the same as assignment date to.");
       return;
     }
     await run(async () => {
@@ -265,7 +276,7 @@ export function AdminConsole({ api, auth }) {
         {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
         {tab === "Technician KPI" ? <TechnicianKpi dashboard={kpiDashboard} filters={kpiFilters} setFilters={setKpiFilters} settings={kpiSettingsEditor} setSettings={setKpiSettingsEditor} busy={busy} onApply={applyKpiFilters} onClear={clearKpiFilters} onSaveSettings={saveKpiSettings} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
-        {tab === "Technicians" ? <TechnicianAdmin technicians={technicians} busy={busy} editor={technicianEditor} setEditor={setTechnicianEditor} onSave={saveTechnician} onDelete={deleteTechnician} /> : null}
+        {tab === "Technicians" ? <TechnicianAdmin technicians={technicians} busy={busy} editor={technicianEditor} setEditor={setTechnicianEditor} onSave={saveTechnician} onDelete={deleteTechnician} onAvailability={toggleTechnicianAvailability} /> : null}
         {tab === "Ava Knowledge" ? <KnowledgeAdmin files={files} busy={busy} selectedFiles={selectedFiles} setSelectedFiles={setSelectedFiles} onUpload={uploadPdfs} onDelete={deletePdf} /> : null}
         {tab === "Security" ? <SecurityAdmin auth={auth} busy={busy} run={run} /> : null}
       </section>
@@ -419,8 +430,8 @@ function AdminDashboard({ dashboard }) {
         {!dashboard.technicianKpis?.length ? <p className="notice compact">Add technicians and assign tickets to begin tracking progress.</p> : null}
       </article>
       <div className="admin-data-table dashboard-ticket-list">
-        <div className="admin-data-head"><span>Ticket</span><span>Technician</span><span>Status</span><span>Priority</span><span>Opened Date</span><span>Closed Date</span></div>
-        {tickets.slice(0, 8).map((ticket) => <div className="admin-data-row" key={ticket.id}><span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span><span>{ticket.assignedTo || "Unassigned"}</span><span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span><span>{ticket.priority}</span><span>{formatMalaysiaDateTime(ticket.createdAt)}</span><span>{formatMalaysiaDateTime(ticket.closedAt, "Not closed")}</span></div>)}
+        <div className="admin-data-head"><span>Ticket</span><span>Technician</span><span>Status</span><span>Priority</span><span>Opened Date</span><span>Assigned Date</span><span>Closed Date</span></div>
+        {tickets.slice(0, 8).map((ticket) => <div className="admin-data-row" key={ticket.id}><span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span><span>{ticket.assignedTo || "Unassigned"}</span><span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span><span>{ticket.priority}</span><span>{formatMalaysiaDateTime(ticket.createdAt)}</span><span>{formatMalaysiaDateTime(ticket.assignedAt, "Not assigned")}</span><span>{formatMalaysiaDateTime(ticket.closedAt, "Not closed")}</span></div>)}
       </div>
     </section>
   );
@@ -441,7 +452,7 @@ function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, 
       <div className="admin-section-title">
         <div>
           <h2>Technician Performance KPI</h2>
-          <p>Measured from ticket creation time to completion time for every assigned ticket.</p>
+          <p>Measured from technician assignment time to completion time for every assigned ticket.</p>
         </div>
         <span className="dashboard-private-label">Admin only</span>
       </div>
@@ -457,8 +468,8 @@ function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, 
       </form>
       <form className="kpi-date-filter" onSubmit={onApply}>
         <div className="kpi-date-fields">
-          <label><span>Ticket date from</span><input type="date" value={filters.dateFrom} onChange={(event) => setFilters({ ...filters, dateFrom: event.target.value })} /></label>
-          <label><span>Ticket date to</span><input type="date" value={filters.dateTo} onChange={(event) => setFilters({ ...filters, dateTo: event.target.value })} /></label>
+          <label><span>Assignment date from</span><input type="date" value={filters.dateFrom} onChange={(event) => setFilters({ ...filters, dateFrom: event.target.value })} /></label>
+          <label><span>Assignment date to</span><input type="date" value={filters.dateTo} onChange={(event) => setFilters({ ...filters, dateTo: event.target.value })} /></label>
         </div>
         <div className="kpi-filter-actions">
           <span>{filteredCount} {filteredCount === 1 ? "ticket" : "tickets"} in view{periodYear ? ` · ${periodYear}` : ""}</span>
@@ -544,7 +555,7 @@ function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, on
       <div className="admin-section-title"><div><h2>Tickets</h2><p>Add, edit, assign, close, or delete support records.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ ...emptyTicket })}>Add ticket</button></div>
       {editor ? <TicketEditor value={editor} setValue={setEditor} technicians={technicians} busy={busy} onSave={onSave} onCancel={() => setEditor(null)} /> : null}
       <div className="admin-data-table ticket-admin-table">
-        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Opened Date</span><span>Closed Date</span><span>Actions</span></div>
+        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Opened Date</span><span>Assigned Date</span><span>Closed Date</span><span>Actions</span></div>
         {tickets.map((ticket) => (
           <div className="admin-data-row" key={ticket.id}>
             <span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span>
@@ -552,6 +563,7 @@ function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, on
             <span>{ticket.assignedTo || "Unassigned"}</span>
             <span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span>
             <span>{formatMalaysiaDateTime(ticket.createdAt)}</span>
+            <span>{formatMalaysiaDateTime(ticket.assignedAt, "Not assigned")}</span>
             <span>{formatMalaysiaDateTime(ticket.closedAt, "Not closed")}</span>
             <span className="row-actions"><button type="button" onClick={() => setEditor({ ...ticket })}>Edit</button><button className="danger-link" type="button" onClick={() => onDelete(ticket)}>Delete</button></span>
           </div>
@@ -574,7 +586,7 @@ function TicketEditor({ value, setValue, technicians, busy, onSave, onCancel }) 
         <label><span>Priority</span><select value={value.priority} onChange={(e) => update("priority", e.target.value)}><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></label>
         <label><span>Case Type</span><select value={value.caseType || "Minor"} onChange={(e) => update("caseType", e.target.value)}><option>Minor</option><option>Major</option></select></label>
         <label><span>Status</span><select value={value.status || "Open"} onChange={(e) => update("status", e.target.value)}>{statuses.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label><span>Technician</span><select value={value.assignedTechnicianId || ""} onChange={(e) => update("assignedTechnicianId", e.target.value)}><option value="">Unassigned</option>{technicians.filter((item) => item.isActive).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+        <label><span>Technician</span><select value={value.assignedTechnicianId || ""} onChange={(e) => update("assignedTechnicianId", e.target.value)}><option value="">Unassigned</option>{technicians.filter((item) => item.isActive).map((item) => <option value={item.id} key={item.id}>{item.name}{item.isAvailable ? "" : " (Unavailable)"}</option>)}</select></label>
         <label><span>Subject</span><input value={value.subject} onChange={(e) => update("subject", e.target.value)} required /></label>
         <label className="editor-wide"><span>Description</span><textarea value={value.description} onChange={(e) => update("description", e.target.value)} required /></label>
         <label className="editor-wide"><span>Resolution note</span><textarea value={value.resolutionNote || ""} onChange={(e) => update("resolutionNote", e.target.value)} /></label>
@@ -607,14 +619,14 @@ function UserAdmin({ users, busy, editor, setEditor, onSave, onAction }) {
   );
 }
 
-function TechnicianAdmin({ technicians, busy, editor, setEditor, onSave, onDelete }) {
+function TechnicianAdmin({ technicians, busy, editor, setEditor, onSave, onDelete, onAvailability }) {
   return (
     <section className="admin-section">
-      <div className="admin-section-title"><div><h2>Technicians</h2><p>Maintain the IT support names available for ticket assignment.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ name: "", email: "", isActive: true })}>Add technician</button></div>
-      {editor ? <form className="admin-editor editor-grid" onSubmit={onSave}><label><span>Name</span><input value={editor.name} onChange={(e) => setEditor({ ...editor, name: e.target.value })} required /></label><label><span>Email</span><input type="email" value={editor.email || ""} onChange={(e) => setEditor({ ...editor, email: e.target.value })} /></label><label className="check-field"><input type="checkbox" checked={editor.isActive} onChange={(e) => setEditor({ ...editor, isActive: e.target.checked })} /><span>Active for assignment</span></label><div className="dialog-actions editor-wide"><button className="secondary-button" type="button" onClick={() => setEditor(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy}>Save technician</button></div></form> : null}
-      <div className="admin-data-table compact-columns">
-        <div className="admin-data-head"><span>Name</span><span>Email</span><span>Status</span><span>Actions</span></div>
-        {technicians.map((item) => <div className="admin-data-row" key={item.id}><span><strong>{item.name}</strong></span><span>{item.email || "-"}</span><span>{item.isActive ? "Active" : "Inactive"}</span><span className="row-actions"><button type="button" onClick={() => setEditor({ ...item })}>Edit</button><button className="danger-link" type="button" onClick={() => onDelete(item)}>Remove</button></span></div>)}
+      <div className="admin-section-title"><div><h2>Technicians</h2><p>Control technician records and automatic round-robin availability.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ name: "", email: "", isActive: true, isAvailable: true })}>Add technician</button></div>
+      {editor ? <form className="admin-editor editor-grid" onSubmit={onSave}><label><span>Name</span><input value={editor.name} onChange={(e) => setEditor({ ...editor, name: e.target.value })} required /></label><label><span>Email</span><input type="email" value={editor.email || ""} onChange={(e) => setEditor({ ...editor, email: e.target.value })} /></label><label className="check-field"><input type="checkbox" checked={editor.isActive} onChange={(e) => setEditor({ ...editor, isActive: e.target.checked })} /><span>Active technician record</span></label><label className="check-field"><input type="checkbox" checked={editor.isAvailable !== false} onChange={(e) => setEditor({ ...editor, isAvailable: e.target.checked })} /><span>Available for Auto Assignment</span></label><div className="dialog-actions editor-wide"><button className="secondary-button" type="button" onClick={() => setEditor(null)}>Cancel</button><button className="primary-button" type="submit" disabled={busy}>Save technician</button></div></form> : null}
+      <div className="admin-data-table technician-admin-table">
+        <div className="admin-data-head"><span>Name</span><span>Email</span><span>Record</span><span>Auto Assignment</span><span>Actions</span></div>
+        {technicians.map((item) => <div className="admin-data-row" key={item.id}><span><strong>{item.name}</strong></span><span>{item.email || "-"}</span><span>{item.isActive ? "Active" : "Inactive"}</span><span><label className="availability-toggle"><input type="checkbox" role="switch" checked={item.isAvailable !== false} disabled={busy || !item.isActive} onChange={() => onAvailability(item)} /><span>{item.isAvailable !== false ? "Available" : "Unavailable"}</span></label></span><span className="row-actions"><button type="button" onClick={() => setEditor({ ...item })}>Edit</button><button className="danger-link" type="button" onClick={() => onDelete(item)}>Remove</button></span></div>)}
       </div>
     </section>
   );

@@ -125,10 +125,12 @@ export function validateProfileInput(input = {}) {
 }
 
 export function validateTechnicianInput(input = {}) {
+  const isActive = input.isActive !== false && input.is_active !== false;
   const technician = {
     name: cleanTicketText(input.name, 120),
     email: cleanEmail(input.email),
-    isActive: input.isActive !== false && input.is_active !== false
+    isActive,
+    isAvailable: isActive && input.isAvailable !== false && input.is_available !== false
   };
   const emailIsValid = !technician.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(technician.email);
   if (!technician.name || !emailIsValid) {
@@ -198,6 +200,7 @@ export function createHelpdeskTicket({
     requesterUserId: cleanTicketText(requesterUserId, 80),
     assignedTechnicianId: "",
     assignedTo: "",
+    assignedAt: "",
     resolutionNote: "",
     slaHours: prioritySlaHours[priority] || prioritySlaHours.Medium,
     createdAt: now.toISOString(),
@@ -211,6 +214,11 @@ export function createHelpdeskTicket({
 export function updateHelpdeskTicket(ticket, updates = {}, now = new Date()) {
   const nextStatus = normalizeTicketChoice(updates.status, ticketStatuses, ticket.status);
   const priority = normalizeTicketChoice(updates.priority, ticketPriorities, ticket.priority);
+  const assignedTechnicianId = cleanTicketText(
+    updates.assignedTechnicianId ?? ticket.assignedTechnicianId,
+    80
+  );
+  const assignmentChanged = assignedTechnicianId !== (ticket.assignedTechnicianId || "");
   const closedAt = nextStatus === "Closed"
     ? ticket.closedAt || now.toISOString()
     : "";
@@ -228,11 +236,11 @@ export function updateHelpdeskTicket(ticket, updates = {}, now = new Date()) {
     asset: cleanTicketText(updates.asset ?? ticket.asset, 120),
     location: cleanTicketText(updates.location ?? ticket.location, 160),
     status: nextStatus,
-    assignedTechnicianId: cleanTicketText(
-      updates.assignedTechnicianId ?? ticket.assignedTechnicianId,
-      80
-    ),
+    assignedTechnicianId,
     assignedTo: cleanTicketText(updates.assignedTo ?? ticket.assignedTo, 120),
+    assignedAt: assignedTechnicianId
+      ? assignmentChanged ? now.toISOString() : ticket.assignedAt || ""
+      : "",
     resolutionNote: cleanTicketText(updates.resolutionNote ?? ticket.resolutionNote, 1000),
     slaHours: prioritySlaHours[priority] || ticket.slaHours || prioritySlaHours.Medium,
     updatedAt: now.toISOString(),
@@ -289,17 +297,25 @@ export function summarizeTicketKpis({ tickets = [], now = new Date() } = {}) {
   };
 }
 
-export function filterTicketsByCreatedDateRange({ tickets = [], dateFrom = "", dateTo = "" } = {}) {
+function filterTicketsByDateRange({ tickets = [], dateFrom = "", dateTo = "", field }) {
   const fromTime = dateFrom ? Date.parse(`${dateFrom}T00:00:00.000+08:00`) : null;
   const toTime = dateTo ? Date.parse(`${dateTo}T23:59:59.999+08:00`) : null;
 
   return tickets.filter((ticket) => {
-    const createdTime = Date.parse(ticket.createdAt);
-    if (!Number.isFinite(createdTime)) return !dateFrom && !dateTo;
-    if (Number.isFinite(fromTime) && createdTime < fromTime) return false;
-    if (Number.isFinite(toTime) && createdTime > toTime) return false;
+    const ticketTime = Date.parse(ticket[field]);
+    if (!Number.isFinite(ticketTime)) return !dateFrom && !dateTo;
+    if (Number.isFinite(fromTime) && ticketTime < fromTime) return false;
+    if (Number.isFinite(toTime) && ticketTime > toTime) return false;
     return true;
   });
+}
+
+export function filterTicketsByCreatedDateRange(input = {}) {
+  return filterTicketsByDateRange({ ...input, field: "createdAt" });
+}
+
+export function filterTicketsByAssignedDateRange(input = {}) {
+  return filterTicketsByDateRange({ ...input, field: "assignedAt" });
 }
 
 export function validateTicketDateRange({ dateFrom = "", dateTo = "" } = {}) {
@@ -364,16 +380,16 @@ export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSet
     else if (ticket.status === "In Progress") row.inProgress += 1;
     else row.open += 1;
 
-    if (ticket.status === "Closed" && ticket.closedAt && ticket.createdAt) {
-      const resolutionHours = (new Date(ticket.closedAt).getTime() - new Date(ticket.createdAt).getTime()) / 36e5;
+    if (ticket.status === "Closed" && ticket.closedAt && ticket.assignedAt) {
+      const resolutionHours = (new Date(ticket.closedAt).getTime() - new Date(ticket.assignedAt).getTime()) / 36e5;
       if (Number.isFinite(resolutionHours) && resolutionHours >= 0) {
         row.resolutionHoursTotal += resolutionHours;
         row.resolvedCount += 1;
         if (resolutionHours <= targetHours) caseKpi.achieved += 1;
         else caseKpi.closedLate += 1;
       }
-    } else if (ticket.status !== "Closed" && ticket.createdAt && Number.isFinite(nowMs)) {
-      const activeHours = (nowMs - new Date(ticket.createdAt).getTime()) / 36e5;
+    } else if (ticket.status !== "Closed" && ticket.assignedAt && Number.isFinite(nowMs)) {
+      const activeHours = (nowMs - new Date(ticket.assignedAt).getTime()) / 36e5;
       if (Number.isFinite(activeHours) && activeHours >= 0) {
         if (activeHours > targetHours) caseKpi.activeOverdue += 1;
         else caseKpi.activeWithinTarget += 1;

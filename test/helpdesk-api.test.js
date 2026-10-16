@@ -48,6 +48,24 @@ test("local helpdesk store persists technician assignment and soft deletion", as
   }
 });
 
+test("local helpdesk store auto assigns available technicians in round robin order", async () => {
+  const store = createHelpdeskStore();
+  await store.initialize();
+  const alex = await store.createTechnician({ name: "Alex Tan" }, "admin-local");
+  const nadia = await store.createTechnician({ name: "Nadia Lee" }, "admin-local");
+
+  const first = await store.createTicket(validTicket, { source: "form" });
+  const second = await store.createTicket({ ...validTicket, subject: "Printer is offline" }, { source: "ava" });
+  await store.updateTechnician(nadia.id, { isAvailable: false });
+  const third = await store.createTicket({ ...validTicket, subject: "Email is unavailable" }, { source: "admin" });
+
+  assert.equal(first.assignedTechnicianId, alex.id);
+  assert.equal(second.assignedTechnicianId, nadia.id);
+  assert.equal(third.assignedTechnicianId, alex.id);
+  assert.ok(first.assignedAt);
+  assert.equal((await store.listTechnicians()).find((item) => item.id === nadia.id).isAvailable, false);
+});
+
 test("authorization rejects pending users and accepts approved administrators", async () => {
   const profiles = {
     "pending-user": {
@@ -120,7 +138,7 @@ test("local store manages pending users and technician KPI data", async () => {
   assert.equal(dashboard.kpis.totalTickets, 1);
 });
 
-test("dashboard filters tickets and technician KPIs by ticket creation date", async () => {
+test("dashboard filters tickets and technician KPIs by ticket assignment date", async () => {
   const store = createHelpdeskStore();
   await store.initialize();
   const technician = await store.createTechnician({ name: "Alex Tan" }, "admin-local");

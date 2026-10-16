@@ -1917,8 +1917,8 @@ select:disabled {
 
 .dashboard-ticket-list .admin-data-head,
 .dashboard-ticket-list .admin-data-row {
-  grid-template-columns: minmax(190px, 1.3fr) minmax(130px, .8fr) 120px 80px minmax(150px, .9fr) minmax(150px, .9fr);
-  min-width: 1020px;
+  grid-template-columns: minmax(190px, 1.3fr) minmax(130px, .8fr) 120px 80px repeat(3, minmax(150px, .9fr));
+  min-width: 1170px;
 }
 
 .manager-title > span {
@@ -2319,8 +2319,23 @@ select:disabled {
 
 .ticket-admin-table .admin-data-head,
 .ticket-admin-table .admin-data-row {
-  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(130px, .8fr) 120px minmax(150px, .9fr) minmax(150px, .9fr) minmax(150px, .8fr);
-  min-width: 1240px;
+  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(130px, .8fr) 120px repeat(3, minmax(150px, .9fr)) minmax(150px, .8fr);
+  min-width: 1390px;
+}
+
+.technician-admin-table .admin-data-head,
+.technician-admin-table .admin-data-row {
+  grid-template-columns: minmax(180px, 1fr) minmax(210px, 1fr) 100px minmax(190px, .8fr) minmax(180px, .8fr);
+  min-width: 900px;
+}
+
+.availability-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #294158;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .row-actions {

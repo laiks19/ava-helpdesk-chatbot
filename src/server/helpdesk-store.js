@@ -5,7 +5,7 @@ import {
   createHelpdeskTicket,
   defaultKpiSettings,
   deleteHelpdeskTicket,
-  filterTicketsByCreatedDateRange,
+  filterTicketsByAssignedDateRange,
   formatTicketNumber,
   normalizeTicketCaseType,
   normalizeKpiSettings,
@@ -63,7 +63,11 @@ function createLocalHelpdeskStore(localPaths) {
       ...ticket,
       caseType: normalizeTicketCaseType(ticket.caseType)
     }));
-    technicians = await readJson(localPaths.technicians, []);
+    technicians = (await readJson(localPaths.technicians, [])).map((technician) => ({
+      ...technician,
+      isAvailable: technician.isAvailable !== false,
+      lastAutoAssignedAt: technician.lastAutoAssignedAt || ""
+    }));
     users = await readJson(localPaths.users, []);
     kpiSettings = normalizeKpiSettings(await readJson(localPaths.kpiSettings, defaultKpiSettings));
     if (!users.some((user) => user.email === "kokseng.lai@ecoworld.my")) {
@@ -92,12 +96,24 @@ function createLocalHelpdeskStore(localPaths) {
 
   async function createTicket(input, options = {}) {
     const sequence = tickets.reduce((max, ticket) => Math.max(max, Number(ticket.ticketNumber) || ticketSequence(ticket.id)), 0) + 1;
-    const ticket = createHelpdeskTicket({
+    const now = new Date();
+    let ticket = createHelpdeskTicket({
       input,
       sequence,
+      now,
       source: options.source,
       requesterUserId: options.requesterUserId
     });
+    const technician = selectNextAvailableTechnician(technicians);
+    if (technician) {
+      ticket = updateHelpdeskTicket(ticket, {
+        assignedTechnicianId: technician.id,
+        assignedTo: technician.name
+      }, now);
+      technician.lastAutoAssignedAt = now.toISOString();
+      technician.updatedAt = now.toISOString();
+      await persistTechnicians();
+    }
     tickets.unshift(ticket);
     await persistTickets();
     return ticket;
@@ -199,7 +215,8 @@ function createLocalHelpdeskStore(localPaths) {
     const validation = validateTechnicianInput({
       name: updates.name ?? current.name,
       email: updates.email ?? current.email,
-      isActive: updates.isActive ?? current.isActive
+      isActive: updates.isActive ?? current.isActive,
+      isAvailable: updates.isAvailable ?? current.isAvailable
     });
     if (!validation.valid) throw storeError(validation.error, 400);
     technicians[index] = { ...current, ...validation.technician, updatedAt: new Date().toISOString() };
@@ -218,7 +235,7 @@ function createLocalHelpdeskStore(localPaths) {
   }
 
   async function getDashboard(filters = {}) {
-    const visibleTickets = filterTicketsByCreatedDateRange({
+    const visibleTickets = filterTicketsByAssignedDateRange({
       tickets: await listTickets(),
       ...filters
     });
@@ -269,6 +286,19 @@ function createLocalHelpdeskStore(localPaths) {
     getDashboard
   };
   return api;
+}
+
+function selectNextAvailableTechnician(technicians = []) {
+  return technicians
+    .filter((technician) => technician.isActive && technician.isAvailable !== false)
+    .toSorted((left, right) => {
+      const leftTime = Date.parse(left.lastAutoAssignedAt || "");
+      const rightTime = Date.parse(right.lastAutoAssignedAt || "");
+      if (!Number.isFinite(leftTime) && Number.isFinite(rightTime)) return -1;
+      if (Number.isFinite(leftTime) && !Number.isFinite(rightTime)) return 1;
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime;
+      return String(left.createdAt || "").localeCompare(String(right.createdAt || "")) || left.name.localeCompare(right.name);
+    })[0] || null;
 }
 
 function createSupabaseHelpdeskStore(supabase) {
@@ -410,6 +440,7 @@ function createSupabaseHelpdeskStore(supabase) {
         name: validation.technician.name,
         email: validation.technician.email,
         is_active: validation.technician.isActive,
+        is_available: validation.technician.isAvailable,
         created_by: actorUserId || null
       })
       .select()
@@ -423,6 +454,7 @@ function createSupabaseHelpdeskStore(supabase) {
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.email !== undefined) payload.email = updates.email;
     if (updates.isActive !== undefined) payload.is_active = updates.isActive;
+    if (updates.isAvailable !== undefined) payload.is_available = updates.isAvailable;
     const { data, error } = await supabase.from("technicians").update(payload).eq("id", id).select().single();
     if (error) throw error;
     return normalizeTechnicianRow(data);
@@ -446,7 +478,7 @@ function createSupabaseHelpdeskStore(supabase) {
       listTechnicians({ includeInactive: true }),
       getKpiSettings()
     ]);
-    const tickets = filterTicketsByCreatedDateRange({ tickets: allTickets, ...filters });
+    const tickets = filterTicketsByAssignedDateRange({ tickets: allTickets, ...filters });
     return {
       tickets,
       kpis: summarizeTicketKpis({ tickets }),
@@ -555,6 +587,7 @@ function normalizeTicketRow(row) {
     status: row.status,
     assignedTechnicianId: row.assigned_technician_id || "",
     assignedTo: row.technicians?.name || "",
+    assignedAt: row.assigned_at || "",
     resolutionNote: row.resolution_note || "",
     source: row.source,
     slaHours: row.sla_hours,
@@ -622,6 +655,8 @@ function normalizeTechnicianRow(row) {
     name: row.name,
     email: row.email || "",
     isActive: row.is_active,
+    isAvailable: row.is_available !== false,
+    lastAutoAssignedAt: row.last_auto_assigned_at || "",
     createdBy: row.created_by || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at

@@ -220,6 +220,36 @@ test("KPI settings migration stores protected administrator target hours", async
   assert.match(sql, /grant all on table public\.helpdesk_kpi_settings to service_role/i);
 });
 
+test("ticket assignment migration adds timestamps availability and transactional round robin", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_ticket_assignment_round_robin.sql")
+  );
+
+  assert.ok(migrationName, "ticket assignment round robin migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  assert.match(sql, /add column if not exists assigned_at timestamptz/i);
+  assert.match(sql, /add column if not exists is_available boolean not null default true/i);
+  assert.match(sql, /add column if not exists last_auto_assigned_at timestamptz/i);
+  assert.match(sql, /pg_advisory_xact_lock/i);
+  assert.match(sql, /for update skip locked/i);
+  assert.match(sql, /details->>'assignedTechnicianId'/i);
+  assert.match(sql, /before insert or update of assigned_technician_id on public\.tickets/i);
+});
+
+test("assignment timestamp correction prevents negative KPI durations", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_normalize_assignment_timestamps.sql")
+  );
+
+  assert.ok(migrationName, "assignment timestamp correction migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  assert.match(sql, /assigned_at > closed_at/i);
+  assert.match(sql, /least\(assignment_time, new\.closed_at\)/i);
+  assert.match(sql, /create or replace function private\.assign_ticket_round_robin/i);
+});
+
 test("ordered Supabase migrations include Ava persistence and private PDF storage", async () => {
   const migrationsDir = path.join(projectRoot, "supabase", "migrations");
   const migrationNames = (await readdir(migrationsDir)).sort();
