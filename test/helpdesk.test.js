@@ -874,8 +874,8 @@ test("technician KPI groups open in-progress and closed tickets by assignee", ()
     closed: 2,
     total: 4,
     completionPercent: 50,
-    minor: { total: 4, achieved: 0, kpiPercent: 0 },
-    major: { total: 0, achieved: 0, kpiPercent: 0 },
+    minor: { total: 4, achieved: 0, closedLate: 0, activeOverdue: 0, activeWithinTarget: 0, kpiPercent: 0 },
+    major: { total: 0, achieved: 0, closedLate: 0, activeOverdue: 0, activeWithinTarget: 0, kpiPercent: 0 },
     averageResolutionHours: 0
   });
   assert.equal(result.find((item) => item.technicianId === "unassigned").open, 1);
@@ -895,9 +895,30 @@ test("technician KPI measures Minor and Major achievements against all assigned 
   const [row] = summarizeTechnicianKpis({ tickets, technicians });
 
   assert.equal(row.total, 5);
-  assert.deepEqual(row.minor, { total: 3, achieved: 1, kpiPercent: 33 });
-  assert.deepEqual(row.major, { total: 2, achieved: 1, kpiPercent: 50 });
+  assert.deepEqual(row.minor, { total: 3, achieved: 1, closedLate: 1, activeOverdue: 1, activeWithinTarget: 0, kpiPercent: 33 });
+  assert.deepEqual(row.major, { total: 2, achieved: 1, closedLate: 1, activeOverdue: 0, activeWithinTarget: 0, kpiPercent: 50 });
   assert.equal(row.averageResolutionHours, 21);
+});
+
+test("technician KPI reports a live breakdown for late and overdue tickets", () => {
+  const [row] = summarizeTechnicianKpis({
+    technicians: [{ id: "tech-1", name: "Alex Tan" }],
+    tickets: [
+      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T04:00:00.000Z", status: "Closed" },
+      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "2026-09-25T06:00:00.000Z", status: "Closed" },
+      { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-09-25T00:00:00.000Z", closedAt: "", status: "Open" }
+    ],
+    now: new Date("2026-09-25T07:00:00.000Z")
+  });
+
+  assert.deepEqual(row.minor, {
+    total: 3,
+    achieved: 1,
+    closedLate: 1,
+    activeOverdue: 1,
+    activeWithinTarget: 0,
+    kpiPercent: 33
+  });
 });
 
 test("technician KPI uses administrator-configured Minor and Major target hours", () => {

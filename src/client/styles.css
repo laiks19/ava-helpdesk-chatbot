@@ -1599,7 +1599,7 @@ select:disabled {
 
 .kpi-chart-bars > div {
   display: grid;
-  grid-template-columns: 42px minmax(140px, 1fr) 38px;
+  grid-template-columns: 42px minmax(140px, 1fr) 66px;
   gap: 8px;
   align-items: center;
   color: #65768a;
@@ -1647,10 +1647,10 @@ select:disabled {
 .technician-kpi-head,
 .technician-kpi-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.2fr) 64px 64px 82px 64px 108px minmax(110px, .8fr) 108px minmax(110px, .8fr) 110px;
+  grid-template-columns: minmax(160px, 1.2fr) 64px 64px 82px 64px 180px minmax(120px, .8fr) 180px minmax(120px, .8fr) 110px;
   gap: 14px;
   align-items: center;
-  min-width: 1260px;
+  min-width: 1440px;
   padding: 13px 16px;
 }
 
@@ -1683,6 +1683,22 @@ select:disabled {
   font-weight: 800;
 }
 
+.kpi-breakdown {
+  display: grid;
+  gap: 3px;
+}
+
+.kpi-breakdown strong {
+  color: #294158;
+  font-size: 12px;
+}
+
+.kpi-breakdown small {
+  color: #6b7c8e;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .kpi-meter {
   display: grid;
   gap: 6px;
@@ -1707,6 +1723,10 @@ select:disabled {
   height: 100%;
   border-radius: inherit;
   background: #11849b;
+}
+
+.kpi-meter > i.zero-score {
+  box-shadow: inset 4px 0 0 #11849b;
 }
 
 .technician-progress .table-title p {

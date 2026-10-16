@@ -468,7 +468,7 @@ function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, 
       </form>
       <div className="technician-kpi-chart" aria-label="Technician KPI performance chart">
         <div className="kpi-chart-heading">
-          <div><h3>KPI Performance by Technician</h3><p>Percentage of assigned tickets completed within the target time.</p></div>
+          <div><h3>Live KPI Performance by Technician</h3><p>Current score based on every assigned ticket in the selected period.</p></div>
           <div className="kpi-chart-legend" aria-label="Chart legend"><span><i className="minor" />Minor</span><span><i className="major" />Major</span></div>
         </div>
         <div className="kpi-chart-scale" aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
@@ -479,7 +479,7 @@ function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, 
       </div>
       <div className="technician-kpi-table">
         <div className="technician-kpi-head">
-          <span>Technician</span><span>Total</span><span>Open</span><span>In Progress</span><span>Closed</span><span>Minor Achieved</span><span>Minor KPI</span><span>Major Achieved</span><span>Major KPI</span><span>Avg Completion</span>
+          <span>Technician</span><span>Total</span><span>Open</span><span>In Progress</span><span>Closed</span><span>Minor Result</span><span>Minor Live KPI</span><span>Major Result</span><span>Major Live KPI</span><span>Avg Completion</span>
         </div>
         {technicians.map((row) => (
           <div className="technician-kpi-row" key={row.technicianId}>
@@ -488,9 +488,9 @@ function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, 
             <span>{row.open}</span>
             <span>{row.inProgress}</span>
             <span>{row.closed}</span>
-            <span>{row.minor.achieved} / {row.minor.total}</span>
+            <KpiBreakdown value={row.minor} />
             <KpiMeter value={row.minor.kpiPercent} available={row.minor.total > 0} />
-            <span>{row.major.achieved} / {row.major.total}</span>
+            <KpiBreakdown value={row.major} />
             <KpiMeter value={row.major.kpiPercent} available={row.major.total > 0} />
             <span>{row.averageResolutionHours}h</span>
           </div>
@@ -506,18 +506,34 @@ function TechnicianKpiChartRow({ row }) {
     <div className="kpi-chart-row">
       <strong>{row.name}</strong>
       <div className="kpi-chart-bars">
-        <div><span>Minor</span><i><b className="minor" style={{ width: `${Math.min(100, Math.max(0, row.minor.kpiPercent))}%` }} /></i><em>{row.minor.total ? `${row.minor.kpiPercent}%` : "N/A"}</em></div>
-        <div><span>Major</span><i><b className="major" style={{ width: `${Math.min(100, Math.max(0, row.major.kpiPercent))}%` }} /></i><em>{row.major.total ? `${row.major.kpiPercent}%` : "N/A"}</em></div>
+        <KpiChartBar label="Minor" tone="minor" value={row.minor} />
+        <KpiChartBar label="Major" tone="major" value={row.major} />
       </div>
     </div>
+  );
+}
+
+function KpiChartBar({ label, tone, value }) {
+  const available = value.total > 0;
+  const width = Math.min(100, Math.max(0, value.kpiPercent));
+  return <div><span>{label}</span><i className={available && width === 0 ? "zero-score" : ""}><b className={tone} style={{ width: `${width}%` }} /></i><em>{available ? `Live ${value.kpiPercent}%` : "N/A"}</em></div>;
+}
+
+function KpiBreakdown({ value }) {
+  if (!value.total) return <span className="kpi-breakdown"><strong>N/A</strong><small>No tickets</small></span>;
+  return (
+    <span className="kpi-breakdown">
+      <strong>{value.achieved} / {value.total} achieved</strong>
+      <small>{value.closedLate || 0} closed late · {value.activeOverdue || 0} active overdue · {value.activeWithinTarget || 0} active within target</small>
+    </span>
   );
 }
 
 function KpiMeter({ value = 0, available = true }) {
   return (
     <span className="kpi-meter">
-      <strong>{available ? `${value}%` : "N/A"}</strong>
-      <i><b style={{ width: `${Math.min(100, Math.max(0, value))}%` }} /></i>
+      <strong>{available ? `Live ${value}%` : "N/A"}</strong>
+      <i className={available && value === 0 ? "zero-score" : ""}><b style={{ width: `${Math.min(100, Math.max(0, value))}%` }} /></i>
     </span>
   );
 }

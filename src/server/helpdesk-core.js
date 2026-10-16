@@ -315,8 +315,17 @@ export function validateTicketDateRange({ dateFrom = "", dateTo = "" } = {}) {
   return { valid: true, filters: { dateFrom, dateTo } };
 }
 
-export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSettings = defaultKpiSettings } = {}) {
+export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSettings = defaultKpiSettings, now = new Date() } = {}) {
   const targets = normalizeKpiSettings(kpiSettings);
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const createCaseKpi = () => ({
+    total: 0,
+    achieved: 0,
+    closedLate: 0,
+    activeOverdue: 0,
+    activeWithinTarget: 0,
+    kpiPercent: 0
+  });
   const createRow = (technicianId, name) => ({
     technicianId,
     name,
@@ -325,8 +334,8 @@ export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSet
     closed: 0,
     total: 0,
     completionPercent: 0,
-    minor: { total: 0, achieved: 0, kpiPercent: 0 },
-    major: { total: 0, achieved: 0, kpiPercent: 0 },
+    minor: createCaseKpi(),
+    major: createCaseKpi(),
     averageResolutionHours: 0,
     resolutionHoursTotal: 0,
     resolvedCount: 0
@@ -349,6 +358,7 @@ export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSet
     row.total += 1;
     const caseType = normalizeTicketCaseType(ticket.caseType);
     const caseKpi = caseType === "Major" ? row.major : row.minor;
+    const targetHours = caseType === "Major" ? targets.majorTargetHours : targets.minorTargetHours;
     caseKpi.total += 1;
     if (["Resolved", "Closed"].includes(ticket.status)) row.closed += 1;
     else if (ticket.status === "In Progress") row.inProgress += 1;
@@ -359,8 +369,14 @@ export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSet
       if (Number.isFinite(resolutionHours) && resolutionHours >= 0) {
         row.resolutionHoursTotal += resolutionHours;
         row.resolvedCount += 1;
-        const targetHours = caseType === "Major" ? targets.majorTargetHours : targets.minorTargetHours;
         if (resolutionHours <= targetHours) caseKpi.achieved += 1;
+        else caseKpi.closedLate += 1;
+      }
+    } else if (ticket.status !== "Closed" && ticket.createdAt && Number.isFinite(nowMs)) {
+      const activeHours = (nowMs - new Date(ticket.createdAt).getTime()) / 36e5;
+      if (Number.isFinite(activeHours) && activeHours >= 0) {
+        if (activeHours > targetHours) caseKpi.activeOverdue += 1;
+        else caseKpi.activeWithinTarget += 1;
       }
     }
   }
