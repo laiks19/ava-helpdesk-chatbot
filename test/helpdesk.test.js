@@ -50,7 +50,7 @@ import {
   formatMalaysiaDateTime,
   peekChatSessionId
 } from "../src/client/api-base.js";
-import { buildClientManagerAlerts } from "../src/client/helpdesk-manager.js";
+import { buildClientManagerAlerts, summarizeOverallKpi } from "../src/client/helpdesk-manager.js";
 import { buildHelpdeskAlerts } from "../src/server/helpdesk-manager.js";
 
 function createMemoryStorage() {
@@ -969,6 +969,43 @@ test("technician KPI reports a live breakdown for late and overdue tickets", () 
   });
 
   assert.deepEqual(row.minor, {
+    total: 3,
+    achieved: 1,
+    closedLate: 1,
+    activeOverdue: 1,
+    activeWithinTarget: 0,
+    kpiPercent: 33
+  });
+});
+
+test("overall KPI combines all technician ticket results without averaging percentages", () => {
+  const overall = summarizeOverallKpi([
+    {
+      technicianId: "tech-1",
+      minor: { total: 1, achieved: 1, closedLate: 0, activeOverdue: 0, activeWithinTarget: 0, kpiPercent: 100 },
+      major: { total: 2, achieved: 1, closedLate: 1, activeOverdue: 0, activeWithinTarget: 0, kpiPercent: 50 }
+    },
+    {
+      technicianId: "tech-2",
+      minor: { total: 4, achieved: 1, closedLate: 1, activeOverdue: 1, activeWithinTarget: 1, kpiPercent: 25 },
+      major: { total: 1, achieved: 0, closedLate: 0, activeOverdue: 1, activeWithinTarget: 0, kpiPercent: 0 }
+    },
+    {
+      technicianId: "unassigned",
+      minor: { total: 3, achieved: 0, closedLate: 0, activeOverdue: 3, activeWithinTarget: 0, kpiPercent: 0 },
+      major: { total: 0, achieved: 0, closedLate: 0, activeOverdue: 0, activeWithinTarget: 0, kpiPercent: 0 }
+    }
+  ]);
+
+  assert.deepEqual(overall.minor, {
+    total: 5,
+    achieved: 2,
+    closedLate: 1,
+    activeOverdue: 1,
+    activeWithinTarget: 1,
+    kpiPercent: 40
+  });
+  assert.deepEqual(overall.major, {
     total: 3,
     achieved: 1,
     closedLate: 1,

@@ -1599,7 +1599,7 @@ select:disabled {
 
 .kpi-chart-bars > div {
   display: grid;
-  grid-template-columns: 42px minmax(140px, 1fr) 66px;
+  grid-template-columns: 42px minmax(140px, 1fr) 120px;
   gap: 8px;
   align-items: center;
   color: #65768a;

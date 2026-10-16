@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { formatMalaysiaDateTime, getMalaysiaCalendarYearRange } from "./api-base.js";
-import { buildClientManagerAlerts } from "./helpdesk-manager.js";
+import { buildClientManagerAlerts, summarizeOverallKpi } from "./helpdesk-manager.js";
 
 const adminOnlyTabs = ["MIS Dashboard", "Helpdesk Manager", "Tickets", "Technician KPI", "Users", "Technicians", "Ava Knowledge", "Security"];
 const statuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
@@ -443,6 +443,7 @@ function Kpi({ title, value, tone }) {
 
 function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, busy, onApply, onClear, onSaveSettings }) {
   const technicians = (dashboard.technicianKpis || []).filter((row) => row.technicianId !== "unassigned");
+  const overallKpi = summarizeOverallKpi(dashboard.technicianKpis || []);
   const filteredCount = dashboard.tickets?.length || 0;
   const appliedSettings = dashboard.kpiSettings || { minorTargetHours: 5, majorTargetHours: 36 };
   const appliedFilters = dashboard.filters || {};
@@ -479,13 +480,12 @@ function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, 
       </form>
       <div className="technician-kpi-chart" aria-label="Technician KPI performance chart">
         <div className="kpi-chart-heading">
-          <div><h3>Live KPI Performance by Technician</h3><p>Current score based on every assigned ticket in the selected period.</p></div>
+          <div><h3>Overall Helpdesk KPI</h3><p>Combined live score for all tickets assigned to all technicians in the selected period.</p></div>
           <div className="kpi-chart-legend" aria-label="Chart legend"><span><i className="minor" />Minor</span><span><i className="major" />Major</span></div>
         </div>
         <div className="kpi-chart-scale" aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
         <div className="kpi-chart-rows">
-          {technicians.map((row) => <TechnicianKpiChartRow row={row} key={row.technicianId} />)}
-          {!technicians.length ? <p className="history-state">No technician KPI data for this ticket date range.</p> : null}
+          <TechnicianKpiChartRow row={{ name: "All technicians", ...overallKpi }} />
         </div>
       </div>
       <div className="technician-kpi-table">
@@ -527,7 +527,7 @@ function TechnicianKpiChartRow({ row }) {
 function KpiChartBar({ label, tone, value }) {
   const available = value.total > 0;
   const width = Math.min(100, Math.max(0, value.kpiPercent));
-  return <div><span>{label}</span><i className={available && width === 0 ? "zero-score" : ""}><b className={tone} style={{ width: `${width}%` }} /></i><em>{available ? `Live ${value.kpiPercent}%` : "N/A"}</em></div>;
+  return <div><span>{label}</span><i className={available && width === 0 ? "zero-score" : ""}><b className={tone} style={{ width: `${width}%` }} /></i><em>{available ? `Live ${value.kpiPercent}% (${value.achieved}/${value.total})` : "N/A"}</em></div>;
 }
 
 function KpiBreakdown({ value }) {
