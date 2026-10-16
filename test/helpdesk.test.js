@@ -32,6 +32,8 @@ import {
   filterTicketsByCreatedDateRange,
   summarizeTicketKpis,
   summarizeTechnicianKpis,
+  validateKpiSettings,
+  validateTicketDateRange,
   startTicketIntake,
   advanceTicketIntake,
   shouldWriteLocalConversationLog,
@@ -43,6 +45,8 @@ import {
   endChatBeforeSignOut,
   getApiBaseUrl,
   getChatSessionId,
+  getMalaysiaCalendarYearRange,
+  formatMalaysiaDateTime,
   peekChatSessionId
 } from "../src/client/api-base.js";
 import { buildClientManagerAlerts } from "../src/client/helpdesk-manager.js";
@@ -896,6 +900,76 @@ test("technician KPI measures Minor and Major achievements against all assigned 
   assert.equal(row.averageResolutionHours, 21);
 });
 
+test("technician KPI uses administrator-configured Minor and Major target hours", () => {
+  const technicians = [{ id: "tech-1", name: "Alex Tan" }];
+  const tickets = [
+    { assignedTechnicianId: "tech-1", caseType: "Minor", createdAt: "2026-01-02T00:00:00.000Z", closedAt: "2026-01-02T06:00:00.000Z", status: "Closed" },
+    { assignedTechnicianId: "tech-1", caseType: "Major", createdAt: "2026-01-02T00:00:00.000Z", closedAt: "2026-01-03T16:00:00.000Z", status: "Closed" }
+  ];
+
+  const [defaultRow] = summarizeTechnicianKpis({ tickets, technicians });
+  const [configuredRow] = summarizeTechnicianKpis({
+    tickets,
+    technicians,
+    kpiSettings: { minorTargetHours: 8, majorTargetHours: 48 }
+  });
+
+  assert.equal(defaultRow.minor.kpiPercent, 0);
+  assert.equal(defaultRow.major.kpiPercent, 0);
+  assert.equal(configuredRow.minor.kpiPercent, 100);
+  assert.equal(configuredRow.major.kpiPercent, 100);
+});
+
+test("technician KPI awards achievement only after a ticket is Closed", () => {
+  const [row] = summarizeTechnicianKpis({
+    technicians: [{ id: "tech-1", name: "Alex Tan" }],
+    tickets: [{
+      assignedTechnicianId: "tech-1",
+      caseType: "Minor",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      closedAt: "2026-01-02T01:00:00.000Z",
+      status: "Resolved"
+    }]
+  });
+
+  assert.equal(row.minor.total, 1);
+  assert.equal(row.minor.achieved, 0);
+  assert.equal(row.minor.kpiPercent, 0);
+});
+
+test("KPI settings accept protected whole-hour targets only", () => {
+  assert.deepEqual(validateKpiSettings({ minorTargetHours: 8, majorTargetHours: 48 }), {
+    valid: true,
+    settings: { minorTargetHours: 8, majorTargetHours: 48 }
+  });
+  assert.equal(validateKpiSettings({ minorTargetHours: 0, majorTargetHours: 48 }).valid, false);
+  assert.equal(validateKpiSettings({ minorTargetHours: 5.5, majorTargetHours: 48 }).valid, false);
+  assert.equal(validateKpiSettings({ minorTargetHours: 5, majorTargetHours: 721 }).valid, false);
+});
+
+test("Technician KPI defaults to the current Malaysia calendar year", () => {
+  assert.deepEqual(getMalaysiaCalendarYearRange(new Date("2026-12-31T16:30:00.000Z")), {
+    dateFrom: "2027-01-01",
+    dateTo: "2027-12-31"
+  });
+});
+
+test("ticket KPI date filters require valid ordered calendar dates", () => {
+  assert.deepEqual(validateTicketDateRange({ dateFrom: "2026-01-01", dateTo: "2026-12-31" }), {
+    valid: true,
+    filters: { dateFrom: "2026-01-01", dateTo: "2026-12-31" }
+  });
+  assert.equal(validateTicketDateRange({ dateFrom: "not-a-date", dateTo: "" }).valid, false);
+  assert.equal(validateTicketDateRange({ dateFrom: "2026-12-31", dateTo: "2026-01-01" }).valid, false);
+});
+
+test("admin ticket timestamps render in Malaysia time with clear fallbacks", () => {
+  assert.match(formatMalaysiaDateTime("2026-01-01T00:30:00.000Z"), /01 Jan 2026/);
+  assert.match(formatMalaysiaDateTime("2026-01-01T00:30:00.000Z"), /08:30/);
+  assert.equal(formatMalaysiaDateTime("", "Not closed"), "Not closed");
+  assert.equal(formatMalaysiaDateTime("invalid"), "Not available");
+});
+
 test("ticket date range includes both Malaysia calendar-date boundaries", () => {
   const tickets = [
     { id: "before", createdAt: "2026-09-01T15:59:59.999Z" },
@@ -952,6 +1026,12 @@ test("admin UI owns case classification and exposes a Technician KPI tab", async
   assert.match(adminSource, /<option>Minor<\/option><option>Major<\/option>/);
   assert.match(adminSource, /Minor KPI/);
   assert.match(adminSource, /Major KPI/);
+  assert.match(adminSource, /Opened Date/);
+  assert.match(adminSource, /Closed Date/);
+  assert.match(adminSource, /KPI Settings/);
+  assert.match(adminSource, /adminUpdateKpiSettings/);
+  assert.match(adminSource, /const appliedSettings = dashboard\.kpiSettings/);
+  assert.match(adminSource, /const appliedFilters = dashboard\.filters/);
 });
 
 test("Ava ticket intake asks for missing details and completes after optional skips", () => {

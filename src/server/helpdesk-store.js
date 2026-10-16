@@ -3,16 +3,19 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   createHelpdeskTicket,
+  defaultKpiSettings,
   deleteHelpdeskTicket,
   filterTicketsByCreatedDateRange,
   formatTicketNumber,
   normalizeTicketCaseType,
+  normalizeKpiSettings,
   summarizeTechnicianKpis,
   summarizeTicketKpis,
   updateHelpdeskTicket,
   validateProfileInput,
   validateTechnicianInput,
-  validateTicketInput
+  validateTicketInput,
+  validateKpiSettings
 } from "./helpdesk-core.js";
 
 export function toPublicDashboard(dashboard = {}) {
@@ -53,6 +56,7 @@ function createLocalHelpdeskStore(localPaths) {
   let tickets = [];
   let technicians = [];
   let users = [];
+  let kpiSettings = { ...defaultKpiSettings };
 
   async function initialize() {
     tickets = (await readJson(localPaths.tickets, [])).map((ticket) => ({
@@ -61,6 +65,7 @@ function createLocalHelpdeskStore(localPaths) {
     }));
     technicians = await readJson(localPaths.technicians, []);
     users = await readJson(localPaths.users, []);
+    kpiSettings = normalizeKpiSettings(await readJson(localPaths.kpiSettings, defaultKpiSettings));
     if (!users.some((user) => user.email === "kokseng.lai@ecoworld.my")) {
       users.unshift({
         id: "admin-local",
@@ -220,8 +225,9 @@ function createLocalHelpdeskStore(localPaths) {
     return {
       tickets: visibleTickets,
       kpis: summarizeTicketKpis({ tickets: visibleTickets }),
-      technicianKpis: summarizeTechnicianKpis({ tickets: visibleTickets, technicians }),
+      technicianKpis: summarizeTechnicianKpis({ tickets: visibleTickets, technicians, kpiSettings }),
       technicians: await listTechnicians({ includeInactive: false }),
+      kpiSettings,
       filters: {
         dateFrom: filters.dateFrom || "",
         dateTo: filters.dateTo || ""
@@ -229,9 +235,22 @@ function createLocalHelpdeskStore(localPaths) {
     };
   }
 
+  async function updateKpiSettings(input, actorUserId = "") {
+    const validation = validateKpiSettings(input);
+    if (!validation.valid) throw storeError(validation.error, 400);
+    kpiSettings = {
+      ...validation.settings,
+      updatedBy: actorUserId,
+      updatedAt: new Date().toISOString()
+    };
+    await persistKpiSettings();
+    return validation.settings;
+  }
+
   const persistTickets = () => writeJson(localPaths.tickets, tickets);
   const persistUsers = () => writeJson(localPaths.users, users);
   const persistTechnicians = () => writeJson(localPaths.technicians, technicians);
+  const persistKpiSettings = () => writeJson(localPaths.kpiSettings, kpiSettings);
   const api = {
     initialize,
     listTickets,
@@ -246,6 +265,7 @@ function createLocalHelpdeskStore(localPaths) {
     createTechnician,
     updateTechnician,
     deleteTechnician,
+    updateKpiSettings,
     getDashboard
   };
   return api;
@@ -421,21 +441,59 @@ function createSupabaseHelpdeskStore(supabase) {
   }
 
   async function getDashboard(filters = {}) {
-    const [allTickets, technicians] = await Promise.all([
+    const [allTickets, technicians, kpiSettings] = await Promise.all([
       listTickets(),
-      listTechnicians({ includeInactive: true })
+      listTechnicians({ includeInactive: true }),
+      getKpiSettings()
     ]);
     const tickets = filterTicketsByCreatedDateRange({ tickets: allTickets, ...filters });
     return {
       tickets,
       kpis: summarizeTicketKpis({ tickets }),
-      technicianKpis: summarizeTechnicianKpis({ tickets, technicians }),
+      technicianKpis: summarizeTechnicianKpis({ tickets, technicians, kpiSettings }),
       technicians: technicians.filter((technician) => technician.isActive),
+      kpiSettings,
       filters: {
         dateFrom: filters.dateFrom || "",
         dateTo: filters.dateTo || ""
       }
     };
+  }
+
+  async function getKpiSettings() {
+    const { data, error } = await supabase
+      .from("helpdesk_kpi_settings")
+      .select("minor_target_hours, major_target_hours")
+      .eq("id", "default")
+      .single();
+    if (error || !data) {
+      console.warn("KPI settings load failed; using default targets.", error?.message || "No settings row returned.");
+      return { ...defaultKpiSettings };
+    }
+    return normalizeKpiSettings({
+      minorTargetHours: data.minor_target_hours,
+      majorTargetHours: data.major_target_hours
+    });
+  }
+
+  async function updateKpiSettings(input, actorUserId = "") {
+    const validation = validateKpiSettings(input);
+    if (!validation.valid) throw storeError(validation.error, 400);
+    const { data, error } = await supabase
+      .from("helpdesk_kpi_settings")
+      .upsert({
+        id: "default",
+        minor_target_hours: validation.settings.minorTargetHours,
+        major_target_hours: validation.settings.majorTargetHours,
+        updated_by: actorUserId || null
+      })
+      .select("minor_target_hours, major_target_hours")
+      .single();
+    if (error) throw error;
+    return normalizeKpiSettings({
+      minorTargetHours: data.minor_target_hours,
+      majorTargetHours: data.major_target_hours
+    });
   }
 
   async function findTicket(id) {
@@ -472,6 +530,7 @@ function createSupabaseHelpdeskStore(supabase) {
     createTechnician,
     updateTechnician,
     deleteTechnician,
+    updateKpiSettings,
     getDashboard
   };
   return api;

@@ -18,6 +18,32 @@ export function buildAdminDashboardPath({ dateFrom = "", dateTo = "" } = {}) {
   return `/api/admin/dashboard${query ? `?${query}` : ""}`;
 }
 
+export function getMalaysiaCalendarYearRange(now = new Date()) {
+  const year = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric"
+  }).format(now);
+  return {
+    dateFrom: `${year}-01-01`,
+    dateTo: `${year}-12-31`
+  };
+}
+
+export function formatMalaysiaDateTime(value, fallback = "Not available") {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return fallback;
+  return new Intl.DateTimeFormat("en-MY", {
+    timeZone: "Asia/Kuala_Lumpur",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(date);
+}
+
 export const CHAT_SESSION_KEY = "ava-tab-session-id";
 
 export function getChatSessionId(

@@ -135,6 +135,35 @@ test("dashboard filters tickets and technician KPIs by ticket creation date", as
   assert.deepEqual(dashboard.filters, { dateFrom: "2999-01-01", dateTo: "2999-01-31" });
 });
 
+test("local helpdesk store persists administrator KPI settings", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ava-helpdesk-kpi-settings-"));
+  const localPaths = {
+    tickets: path.join(directory, "tickets.json"),
+    users: path.join(directory, "users.json"),
+    technicians: path.join(directory, "technicians.json"),
+    kpiSettings: path.join(directory, "kpi-settings.json")
+  };
+  try {
+    const store = createHelpdeskStore({ localPaths });
+    await store.initialize();
+    assert.deepEqual((await store.getDashboard()).kpiSettings, {
+      minorTargetHours: 5,
+      majorTargetHours: 36
+    });
+
+    await store.updateKpiSettings({ minorTargetHours: 8, majorTargetHours: 48 }, "admin-local");
+    const restarted = createHelpdeskStore({ localPaths });
+    await restarted.initialize();
+
+    assert.deepEqual((await restarted.getDashboard()).kpiSettings, {
+      minorTargetHours: 8,
+      majorTargetHours: 48
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("public dashboard removes requester and private ticket details", () => {
   const dashboard = toPublicDashboard({
     tickets: [{
@@ -180,6 +209,27 @@ test("dashboard route is administrator-only", async () => {
   assert.match(source, /app\.get\("\/api\/admin\/dashboard", requireAdmin/);
   assert.doesNotMatch(source, /app\.get\("\/api\/dashboard"/);
   assert.doesNotMatch(source, /app\.get\("\/api\/tickets"/);
+  assert.match(source, /app\.patch\("\/api\/admin\/kpi-settings", requireAdmin/);
+});
+
+test("ticket mutations complete before a non-critical KPI refresh", async () => {
+  const source = await readFile(path.join(process.cwd(), "src", "client", "admin-console.jsx"), "utf8");
+  const saveStart = source.indexOf("async function saveTicket");
+  const saveEnd = source.indexOf("async function deleteTicket", saveStart);
+  const saveTicket = source.slice(saveStart, saveEnd);
+
+  assert.ok(saveTicket.indexOf("setTicketEditor(null)") < saveTicket.indexOf("setKpiDashboard"));
+  assert.match(saveTicket, /kpiRefreshFailed/);
+});
+
+test("dashboard falls back to default KPI settings when the settings read is unavailable", async () => {
+  const source = await readFile(path.join(process.cwd(), "src", "server", "helpdesk-store.js"), "utf8");
+  const loaderStart = source.indexOf("async function getKpiSettings");
+  const loaderEnd = source.indexOf("async function updateKpiSettings", loaderStart);
+  const loader = source.slice(loaderStart, loaderEnd);
+
+  assert.match(loader, /defaultKpiSettings/);
+  assert.match(loader, /if \(error \|\| !data\)/);
 });
 
 test("protects the helpdesk manager query with requireAdmin", async () => {

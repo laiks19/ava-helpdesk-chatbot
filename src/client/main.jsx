@@ -63,6 +63,13 @@ const api = {
   async adminDashboard(token, filters = {}) {
     return request(buildAdminDashboardPath(filters), { headers: authHeaders(token) });
   },
+  async adminUpdateKpiSettings(token, settings) {
+    return request("/api/admin/kpi-settings", {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(settings)
+    });
+  },
   async helpdeskManagerQuery(token, question) {
     return request("/api/admin/helpdesk-manager/query", {
       method: "POST",

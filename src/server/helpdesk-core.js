@@ -55,6 +55,10 @@ const ticketPriorities = ["Critical", "High", "Medium", "Low"];
 const ticketStatuses = ["Open", "In Progress", "Waiting on User", "On Hold", "Resolved", "Closed"];
 const ticketCategories = ["Hardware", "Software", "Network", "Email", "Account Access", "Printer", "Security", "Other"];
 const ticketCaseTypes = ["Minor", "Major"];
+export const defaultKpiSettings = Object.freeze({
+  minorTargetHours: 5,
+  majorTargetHours: 36
+});
 const prioritySlaHours = {
   Critical: 4,
   High: 8,
@@ -77,6 +81,26 @@ function normalizeTicketChoice(value, allowed, fallback = "") {
 
 export function normalizeTicketCaseType(value, fallback = "Minor") {
   return normalizeTicketChoice(value, ticketCaseTypes, fallback);
+}
+
+export function validateKpiSettings(input = {}) {
+  const settings = {
+    minorTargetHours: Number(input.minorTargetHours),
+    majorTargetHours: Number(input.majorTargetHours)
+  };
+  const validTarget = (value) => Number.isInteger(value) && value >= 1 && value <= 720;
+  if (!validTarget(settings.minorTargetHours) || !validTarget(settings.majorTargetHours)) {
+    return { valid: false, error: "KPI target hours must be whole numbers between 1 and 720." };
+  }
+  return { valid: true, settings };
+}
+
+export function normalizeKpiSettings(input = {}) {
+  const validation = validateKpiSettings({
+    minorTargetHours: input.minorTargetHours ?? defaultKpiSettings.minorTargetHours,
+    majorTargetHours: input.majorTargetHours ?? defaultKpiSettings.majorTargetHours
+  });
+  return validation.valid ? validation.settings : { ...defaultKpiSettings };
 }
 
 export function validateProfileInput(input = {}) {
@@ -187,7 +211,7 @@ export function createHelpdeskTicket({
 export function updateHelpdeskTicket(ticket, updates = {}, now = new Date()) {
   const nextStatus = normalizeTicketChoice(updates.status, ticketStatuses, ticket.status);
   const priority = normalizeTicketChoice(updates.priority, ticketPriorities, ticket.priority);
-  const closedAt = ["Resolved", "Closed"].includes(nextStatus)
+  const closedAt = nextStatus === "Closed"
     ? ticket.closedAt || now.toISOString()
     : "";
 
@@ -278,7 +302,21 @@ export function filterTicketsByCreatedDateRange({ tickets = [], dateFrom = "", d
   });
 }
 
-export function summarizeTechnicianKpis({ tickets = [], technicians = [] } = {}) {
+export function validateTicketDateRange({ dateFrom = "", dateTo = "" } = {}) {
+  const validDate = (value) => {
+    if (!value) return true;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  if (!validDate(dateFrom) || !validDate(dateTo) || (dateFrom && dateTo && dateFrom > dateTo)) {
+    return { valid: false, error: "Enter a valid ticket date range." };
+  }
+  return { valid: true, filters: { dateFrom, dateTo } };
+}
+
+export function summarizeTechnicianKpis({ tickets = [], technicians = [], kpiSettings = defaultKpiSettings } = {}) {
+  const targets = normalizeKpiSettings(kpiSettings);
   const createRow = (technicianId, name) => ({
     technicianId,
     name,
@@ -316,12 +354,12 @@ export function summarizeTechnicianKpis({ tickets = [], technicians = [] } = {})
     else if (ticket.status === "In Progress") row.inProgress += 1;
     else row.open += 1;
 
-    if (ticket.closedAt && ticket.createdAt) {
+    if (ticket.status === "Closed" && ticket.closedAt && ticket.createdAt) {
       const resolutionHours = (new Date(ticket.closedAt).getTime() - new Date(ticket.createdAt).getTime()) / 36e5;
       if (Number.isFinite(resolutionHours) && resolutionHours >= 0) {
         row.resolutionHoursTotal += resolutionHours;
         row.resolvedCount += 1;
-        const targetHours = caseType === "Major" ? 36 : 5;
+        const targetHours = caseType === "Major" ? targets.majorTargetHours : targets.minorTargetHours;
         if (resolutionHours <= targetHours) caseKpi.achieved += 1;
       }
     }

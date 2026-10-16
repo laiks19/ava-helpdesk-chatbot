@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { formatMalaysiaDateTime, getMalaysiaCalendarYearRange } from "./api-base.js";
 import { buildClientManagerAlerts } from "./helpdesk-manager.js";
 
 const adminOnlyTabs = ["MIS Dashboard", "Helpdesk Manager", "Tickets", "Technician KPI", "Users", "Technicians", "Ava Knowledge", "Security"];
@@ -35,12 +36,14 @@ const emptyTicket = {
 };
 
 export function AdminConsole({ api, auth }) {
+  const currentYearRange = useMemo(() => getMalaysiaCalendarYearRange(), []);
   const [tab, setTab] = useState("MIS Dashboard");
   const [credentials, setCredentials] = useState({ email: "kokseng.lai@ecoworld.my", password: "" });
   const [dashboard, setDashboard] = useState({ tickets: [], kpis: {}, technicianKpis: [], technicians: [] });
   const [kpiDashboard, setKpiDashboard] = useState({ tickets: [], kpis: {}, technicianKpis: [], technicians: [] });
-  const [kpiFilters, setKpiFilters] = useState({ dateFrom: "", dateTo: "" });
-  const [appliedKpiFilters, setAppliedKpiFilters] = useState({ dateFrom: "", dateTo: "" });
+  const [kpiFilters, setKpiFilters] = useState(currentYearRange);
+  const [appliedKpiFilters, setAppliedKpiFilters] = useState(currentYearRange);
+  const [kpiSettingsEditor, setKpiSettingsEditor] = useState({ minorTargetHours: 5, majorTargetHours: 36 });
   const [users, setUsers] = useState([]);
   const [technicians, setTechnicians] = useState([]);
   const [files, setFiles] = useState([]);
@@ -58,21 +61,25 @@ export function AdminConsole({ api, auth }) {
     if (!token || !isAdmin) return;
     Promise.allSettled([
       api.adminDashboard(token),
+      api.adminDashboard(token, currentYearRange),
       api.adminUsers(token),
       api.adminTechnicians(token),
       api.pdfs(token)
-    ]).then(([dashboardResult, userResult, technicianResult, pdfResult]) => {
+    ]).then(([dashboardResult, kpiResult, userResult, technicianResult, pdfResult]) => {
       if (dashboardResult.status === "fulfilled") {
         setDashboard(dashboardResult.value);
-        setKpiDashboard(dashboardResult.value);
+      }
+      if (kpiResult.status === "fulfilled") {
+        setKpiDashboard(kpiResult.value);
+        setKpiSettingsEditor(kpiResult.value.kpiSettings || { minorTargetHours: 5, majorTargetHours: 36 });
       }
       if (userResult.status === "fulfilled") setUsers(userResult.value.users || []);
       if (technicianResult.status === "fulfilled") setTechnicians(technicianResult.value.technicians || []);
       if (pdfResult.status === "fulfilled") setFiles(pdfResult.value.files || []);
-      const failures = [dashboardResult, userResult, technicianResult, pdfResult].filter((result) => result.status === "rejected");
+      const failures = [dashboardResult, kpiResult, userResult, technicianResult, pdfResult].filter((result) => result.status === "rejected");
       if (failures.length) setNotice(`${failures.length} admin section${failures.length === 1 ? "" : "s"} could not be loaded. You can still use the available sections.`);
     });
-  }, [api, isAdmin, token]);
+  }, [api, currentYearRange, isAdmin, token]);
 
   async function login(event) {
     event.preventDefault();
@@ -88,14 +95,21 @@ export function AdminConsole({ api, auth }) {
       ...ticketEditor,
       assignedTo: technicians.find((item) => item.id === ticketEditor.assignedTechnicianId)?.name || ""
     };
+    let kpiRefreshFailed = false;
+    const success = ticketEditor.id ? "Ticket updated." : "Ticket created.";
     await run(async () => {
       const result = ticketEditor.id
         ? await api.adminUpdateTicket(token, ticketEditor.id, payload)
         : await api.adminCreateTicket(token, payload);
       setDashboard(result);
-      setKpiDashboard(await api.adminDashboard(token, appliedKpiFilters));
       setTicketEditor(null);
-    }, ticketEditor.id ? "Ticket updated." : "Ticket created.");
+      try {
+        setKpiDashboard(await api.adminDashboard(token, appliedKpiFilters));
+      } catch {
+        kpiRefreshFailed = true;
+      }
+    }, success);
+    if (kpiRefreshFailed) setNotice(`${success} Refresh the Technician KPI tab to load its latest score.`);
   }
 
   async function deleteTicket(ticket) {
@@ -183,12 +197,22 @@ export function AdminConsole({ api, auth }) {
   }
 
   async function clearKpiFilters() {
-    const cleared = { dateFrom: "", dateTo: "" };
+    const cleared = getMalaysiaCalendarYearRange();
     await run(async () => {
       setKpiFilters(cleared);
       setAppliedKpiFilters(cleared);
       setKpiDashboard(await api.adminDashboard(token, cleared));
-    }, "Technician KPI date filter cleared.");
+    }, "Technician KPI restored to the current year.");
+  }
+
+  async function saveKpiSettings(event) {
+    event.preventDefault();
+    await run(async () => {
+      const result = await api.adminUpdateKpiSettings(token, kpiSettingsEditor);
+      setKpiSettingsEditor(result.kpiSettings);
+      setDashboard(await api.adminDashboard(token));
+      setKpiDashboard(await api.adminDashboard(token, appliedKpiFilters));
+    }, "Technician KPI targets updated.");
   }
 
   async function run(action, success) {
@@ -239,7 +263,7 @@ export function AdminConsole({ api, auth }) {
         {tab === "MIS Dashboard" ? <AdminDashboard dashboard={dashboard} /> : null}
         <div hidden={tab !== "Helpdesk Manager"}><HelpdeskManager api={api} token={token} tickets={dashboard.tickets || []} /></div>
         {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
-        {tab === "Technician KPI" ? <TechnicianKpi dashboard={kpiDashboard} filters={kpiFilters} setFilters={setKpiFilters} busy={busy} onApply={applyKpiFilters} onClear={clearKpiFilters} /> : null}
+        {tab === "Technician KPI" ? <TechnicianKpi dashboard={kpiDashboard} filters={kpiFilters} setFilters={setKpiFilters} settings={kpiSettingsEditor} setSettings={setKpiSettingsEditor} busy={busy} onApply={applyKpiFilters} onClear={clearKpiFilters} onSaveSettings={saveKpiSettings} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
         {tab === "Technicians" ? <TechnicianAdmin technicians={technicians} busy={busy} editor={technicianEditor} setEditor={setTechnicianEditor} onSave={saveTechnician} onDelete={deleteTechnician} /> : null}
         {tab === "Ava Knowledge" ? <KnowledgeAdmin files={files} busy={busy} selectedFiles={selectedFiles} setSelectedFiles={setSelectedFiles} onUpload={uploadPdfs} onDelete={deletePdf} /> : null}
@@ -395,8 +419,8 @@ function AdminDashboard({ dashboard }) {
         {!dashboard.technicianKpis?.length ? <p className="notice compact">Add technicians and assign tickets to begin tracking progress.</p> : null}
       </article>
       <div className="admin-data-table dashboard-ticket-list">
-        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Priority</span></div>
-        {tickets.slice(0, 8).map((ticket) => <div className="admin-data-row" key={ticket.id}><span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span><span>{ticket.requesterName}<small>{ticket.department || "-"}</small></span><span>{ticket.assignedTo || "Unassigned"}</span><span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span><span>{ticket.priority}</span></div>)}
+        <div className="admin-data-head"><span>Ticket</span><span>Technician</span><span>Status</span><span>Priority</span><span>Opened Date</span><span>Closed Date</span></div>
+        {tickets.slice(0, 8).map((ticket) => <div className="admin-data-row" key={ticket.id}><span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span><span>{ticket.assignedTo || "Unassigned"}</span><span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span><span>{ticket.priority}</span><span>{formatMalaysiaDateTime(ticket.createdAt)}</span><span>{formatMalaysiaDateTime(ticket.closedAt, "Not closed")}</span></div>)}
       </div>
     </section>
   );
@@ -406,9 +430,12 @@ function Kpi({ title, value, tone }) {
   return <article className={`kpi-card ${tone}`}><div><p>{title}</p><strong>{value}</strong><small>Current helpdesk data</small></div></article>;
 }
 
-function TechnicianKpi({ dashboard, filters, setFilters, busy, onApply, onClear }) {
+function TechnicianKpi({ dashboard, filters, setFilters, settings, setSettings, busy, onApply, onClear, onSaveSettings }) {
   const technicians = (dashboard.technicianKpis || []).filter((row) => row.technicianId !== "unassigned");
   const filteredCount = dashboard.tickets?.length || 0;
+  const appliedSettings = dashboard.kpiSettings || { minorTargetHours: 5, majorTargetHours: 36 };
+  const appliedFilters = dashboard.filters || {};
+  const periodYear = appliedFilters.dateFrom?.slice(0, 4);
   return (
     <section className="admin-section technician-kpi-section">
       <div className="admin-section-title">
@@ -419,17 +446,23 @@ function TechnicianKpi({ dashboard, filters, setFilters, busy, onApply, onClear 
         <span className="dashboard-private-label">Admin only</span>
       </div>
       <div className="kpi-rules" aria-label="KPI formulas">
-        <div><strong>Minor KPI</strong><span>Closed within 5 hours / all Minor tickets</span></div>
-        <div><strong>Major KPI</strong><span>Closed within 36 hours / all Major tickets</span></div>
+        <div><strong>Minor KPI</strong><span>Closed within {appliedSettings.minorTargetHours} hours / all Minor tickets</span></div>
+        <div><strong>Major KPI</strong><span>Closed within {appliedSettings.majorTargetHours} hours / all Major tickets</span></div>
       </div>
+      <form className="kpi-settings" onSubmit={onSaveSettings}>
+        <div><h3>KPI Settings</h3><p>Admin-only target hours used for all technician scores.</p></div>
+        <label><span>Minor target hours</span><input type="number" min="1" max="720" step="1" value={settings.minorTargetHours} onChange={(event) => setSettings({ ...settings, minorTargetHours: Number(event.target.value) })} required /></label>
+        <label><span>Major target hours</span><input type="number" min="1" max="720" step="1" value={settings.majorTargetHours} onChange={(event) => setSettings({ ...settings, majorTargetHours: Number(event.target.value) })} required /></label>
+        <button className="primary-button" type="submit" disabled={busy}>Save targets</button>
+      </form>
       <form className="kpi-date-filter" onSubmit={onApply}>
         <div className="kpi-date-fields">
           <label><span>Ticket date from</span><input type="date" value={filters.dateFrom} onChange={(event) => setFilters({ ...filters, dateFrom: event.target.value })} /></label>
           <label><span>Ticket date to</span><input type="date" value={filters.dateTo} onChange={(event) => setFilters({ ...filters, dateTo: event.target.value })} /></label>
         </div>
         <div className="kpi-filter-actions">
-          <span>{filteredCount} {filteredCount === 1 ? "ticket" : "tickets"} in view</span>
-          <button className="secondary-button" type="button" onClick={onClear} disabled={busy || (!filters.dateFrom && !filters.dateTo)}>Clear</button>
+          <span>{filteredCount} {filteredCount === 1 ? "ticket" : "tickets"} in view{periodYear ? ` · ${periodYear}` : ""}</span>
+          <button className="secondary-button" type="button" onClick={onClear} disabled={busy}>Current year</button>
           <button className="primary-button" type="submit" disabled={busy}>{busy ? "Applying..." : "Apply filter"}</button>
         </div>
       </form>
@@ -446,16 +479,19 @@ function TechnicianKpi({ dashboard, filters, setFilters, busy, onApply, onClear 
       </div>
       <div className="technician-kpi-table">
         <div className="technician-kpi-head">
-          <span>Technician</span><span>Total Tickets</span><span>Minor Achieved</span><span>Minor KPI</span><span>Major Achieved</span><span>Major KPI</span><span>Avg Completion</span>
+          <span>Technician</span><span>Total</span><span>Open</span><span>In Progress</span><span>Closed</span><span>Minor Achieved</span><span>Minor KPI</span><span>Major Achieved</span><span>Major KPI</span><span>Avg Completion</span>
         </div>
         {technicians.map((row) => (
           <div className="technician-kpi-row" key={row.technicianId}>
             <span><strong>{row.name}</strong></span>
             <span className="kpi-number">{row.total}</span>
+            <span>{row.open}</span>
+            <span>{row.inProgress}</span>
+            <span>{row.closed}</span>
             <span>{row.minor.achieved} / {row.minor.total}</span>
-            <KpiMeter value={row.minor.kpiPercent} />
+            <KpiMeter value={row.minor.kpiPercent} available={row.minor.total > 0} />
             <span>{row.major.achieved} / {row.major.total}</span>
-            <KpiMeter value={row.major.kpiPercent} />
+            <KpiMeter value={row.major.kpiPercent} available={row.major.total > 0} />
             <span>{row.averageResolutionHours}h</span>
           </div>
         ))}
@@ -470,17 +506,17 @@ function TechnicianKpiChartRow({ row }) {
     <div className="kpi-chart-row">
       <strong>{row.name}</strong>
       <div className="kpi-chart-bars">
-        <div><span>Minor</span><i><b className="minor" style={{ width: `${Math.min(100, Math.max(0, row.minor.kpiPercent))}%` }} /></i><em>{row.minor.kpiPercent}%</em></div>
-        <div><span>Major</span><i><b className="major" style={{ width: `${Math.min(100, Math.max(0, row.major.kpiPercent))}%` }} /></i><em>{row.major.kpiPercent}%</em></div>
+        <div><span>Minor</span><i><b className="minor" style={{ width: `${Math.min(100, Math.max(0, row.minor.kpiPercent))}%` }} /></i><em>{row.minor.total ? `${row.minor.kpiPercent}%` : "N/A"}</em></div>
+        <div><span>Major</span><i><b className="major" style={{ width: `${Math.min(100, Math.max(0, row.major.kpiPercent))}%` }} /></i><em>{row.major.total ? `${row.major.kpiPercent}%` : "N/A"}</em></div>
       </div>
     </div>
   );
 }
 
-function KpiMeter({ value = 0 }) {
+function KpiMeter({ value = 0, available = true }) {
   return (
     <span className="kpi-meter">
-      <strong>{value}%</strong>
+      <strong>{available ? `${value}%` : "N/A"}</strong>
       <i><b style={{ width: `${Math.min(100, Math.max(0, value))}%` }} /></i>
     </span>
   );
@@ -491,14 +527,16 @@ function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, on
     <section className="admin-section">
       <div className="admin-section-title"><div><h2>Tickets</h2><p>Add, edit, assign, close, or delete support records.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ ...emptyTicket })}>Add ticket</button></div>
       {editor ? <TicketEditor value={editor} setValue={setEditor} technicians={technicians} busy={busy} onSave={onSave} onCancel={() => setEditor(null)} /> : null}
-      <div className="admin-data-table">
-        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Actions</span></div>
+      <div className="admin-data-table ticket-admin-table">
+        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Opened Date</span><span>Closed Date</span><span>Actions</span></div>
         {tickets.map((ticket) => (
           <div className="admin-data-row" key={ticket.id}>
             <span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span>
             <span>{ticket.requesterName}<small>{ticket.email}</small></span>
             <span>{ticket.assignedTo || "Unassigned"}</span>
             <span><i className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</i></span>
+            <span>{formatMalaysiaDateTime(ticket.createdAt)}</span>
+            <span>{formatMalaysiaDateTime(ticket.closedAt, "Not closed")}</span>
             <span className="row-actions"><button type="button" onClick={() => setEditor({ ...ticket })}>Edit</button><button className="danger-link" type="button" onClick={() => onDelete(ticket)}>Delete</button></span>
           </div>
         ))}

@@ -45,6 +45,7 @@ import {
   updateHelpdeskTicket,
   validateAdminCredentials,
   validateHelpdeskContact,
+  validateTicketDateRange,
   validateTicketInput,
   wantsHelpdeskContact
 } from "./helpdesk-core.js";
@@ -60,6 +61,7 @@ const indexPath = path.join(dataDir, "pdf-index.json");
 const ticketsPath = path.join(dataDir, "tickets.json");
 const usersPath = path.join(dataDir, "users.json");
 const techniciansPath = path.join(dataDir, "technicians.json");
+const kpiSettingsPath = path.join(dataDir, "kpi-settings.json");
 const aiNewsPath = path.join(dataDir, "ai-news.json");
 const helpdeskLogDir = path.join(projectRoot, "helpdesklog");
 const activeSessionPath = path.join(helpdeskLogDir, "active-sessions.json");
@@ -87,7 +89,7 @@ await sessions.load();
 const knowledgeBase = createKnowledgeBase(await loadIndex());
 const helpdeskStore = createHelpdeskStore({
   supabase: isVercel ? supabaseAdmin : null,
-  localPaths: { tickets: ticketsPath, users: usersPath, technicians: techniciansPath },
+  localPaths: { tickets: ticketsPath, users: usersPath, technicians: techniciansPath, kpiSettings: kpiSettingsPath },
   isProduction: isVercel
 });
 await helpdeskStore.initialize();
@@ -173,10 +175,20 @@ app.get("/api/admin/tickets", requireAdmin, asyncRoute(async (_req, res) => {
 }));
 
 app.get("/api/admin/dashboard", requireAdmin, asyncRoute(async (req, res) => {
-  res.json(await helpdeskStore.getDashboard({
+  const validation = validateTicketDateRange({
     dateFrom: String(req.query.dateFrom || ""),
     dateTo: String(req.query.dateTo || "")
-  }));
+  });
+  if (!validation.valid) {
+    res.status(400).json({ error: validation.error });
+    return;
+  }
+  res.json(await helpdeskStore.getDashboard(validation.filters));
+}));
+
+app.patch("/api/admin/kpi-settings", requireAdmin, asyncRoute(async (req, res) => {
+  const kpiSettings = await helpdeskStore.updateKpiSettings(req.body || {}, req.profile.id);
+  res.json({ kpiSettings });
 }));
 
 app.post("/api/admin/helpdesk-manager/query", requireAdmin, asyncRoute(async (req, res) => {

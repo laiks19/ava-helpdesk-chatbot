@@ -204,6 +204,22 @@ test("ticket case type migration adds constrained Minor and Major classification
   assert.match(sql, /case_type in \('Minor', 'Major'\)/i);
 });
 
+test("KPI settings migration stores protected administrator target hours", async () => {
+  const migrationsDir = path.join(projectRoot, "supabase", "migrations");
+  const migrationName = (await readdir(migrationsDir)).find((name) =>
+    name.endsWith("_helpdesk_kpi_settings.sql")
+  );
+
+  assert.ok(migrationName, "helpdesk KPI settings migration is missing");
+  const sql = await readFile(path.join(migrationsDir, migrationName), "utf8");
+  assert.match(sql, /create table public\.helpdesk_kpi_settings/i);
+  assert.match(sql, /minor_target_hours integer not null default 5/i);
+  assert.match(sql, /major_target_hours integer not null default 36/i);
+  assert.match(sql, /enable row level security/i);
+  assert.match(sql, /revoke all on table public\.helpdesk_kpi_settings from anon, authenticated/i);
+  assert.match(sql, /grant all on table public\.helpdesk_kpi_settings to service_role/i);
+});
+
 test("ordered Supabase migrations include Ava persistence and private PDF storage", async () => {
   const migrationsDir = path.join(projectRoot, "supabase", "migrations");
   const migrationNames = (await readdir(migrationsDir)).sort();
