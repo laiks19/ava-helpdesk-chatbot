@@ -456,9 +456,24 @@ function ticketIntakeResult(draft, error = "") {
 
 export function startTicketIntake({ messages = [], profile = null } = {}) {
   const profileName = profile?.fullName || profile?.full_name || getCapturedName(messages);
-  const issue = [...messages]
-    .reverse()
-    .find((item) => item.role === "user" && isItSupportQuestion(item.content))?.content || "";
+  const ticketOfferIndex = messages.findLastIndex?.((item) => item.role === "assistant" && item.source === "ticket_offer") ?? -1;
+  const ticketOffer = ticketOfferIndex >= 0 ? messages[ticketOfferIndex] : null;
+  const offeredSubject = cleanTicketText(ticketOffer?.ticketSubject, 180);
+  const firstIssueIndex = offeredSubject
+    ? messages.findIndex(
+        (item) => item.role === "user" && normalizeQuestion(item.content) === normalizeQuestion(offeredSubject)
+      )
+    : -1;
+  const scopedMessages = ticketOfferIndex >= 0
+    ? messages.slice(Math.max(0, firstIssueIndex), ticketOfferIndex)
+    : messages;
+  const userMessages = scopedMessages.filter((item) => item.role === "user");
+  const issue = offeredSubject || [...userMessages].reverse().find((item) => isItSupportQuestion(item.content))?.content ||
+    userMessages[0]?.content || "";
+  const conversationDetails = [...new Set(userMessages.map((item) => cleanTicketText(item.content, 500)))]
+    .filter(Boolean)
+    .slice(-8)
+    .join(" | ");
   const draft = {
     requesterName: cleanTicketText(profileName, 120),
     email: cleanEmail(profile?.email),
@@ -468,7 +483,7 @@ export function startTicketIntake({ messages = [], profile = null } = {}) {
     asset: "",
     location: "",
     subject: cleanTicketText(issue, 80),
-    description: cleanTicketText(issue, 2000),
+    description: cleanTicketText(conversationDetails || issue, 2000),
     skippedFields: [],
     idempotencyKey: randomUUID()
   };
@@ -548,7 +563,21 @@ export function buildHelpdeskContactDraft({ name, email, summary, transcript }) 
 export function wantsHelpdeskContact(message, history = []) {
   const lastAssistantMessage = [...history].reverse().find((item) => item.role === "assistant");
   if (!["helpdesk_offer", "helpdesk_escalation"].includes(lastAssistantMessage?.source)) return false;
+  return isAffirmativeResponse(message);
+}
+
+function isAffirmativeResponse(message) {
   return /^(yes|yeah|yep|sure|ok|okay|please|yes please|go ahead)\b/i.test(String(message || "").trim());
+}
+
+export function wantsTicketCreation(message, history = []) {
+  const lastAssistantMessage = [...history].reverse().find((item) => item.role === "assistant");
+  return lastAssistantMessage?.source === "ticket_offer" && isAffirmativeResponse(message);
+}
+
+export function beginTicketIntakeFromOffer({ message, history = [], profile = null } = {}) {
+  if (!wantsTicketCreation(message, history)) return null;
+  return startTicketIntake({ messages: history, profile });
 }
 
 export function createUploadedPdfDocument({ file, text, pages, now = new Date() }) {
@@ -840,8 +869,10 @@ function contextualizeMessage(message, history = []) {
 export function classifyHelpdeskTurn(message, history = []) {
   const previousTopic = previousUserItTopic(history);
   const contextualMessage = contextualizeMessage(message, history);
+  const occurrenceCount = repeatedUnsolvedCount(message, history);
   const type = (() => {
-    if (repeatedUnsolvedCount(message, history) > 5) return "needs_escalation";
+    if (occurrenceCount >= 6) return "ticket_offer";
+    if (occurrenceCount === 3) return "needs_more_details";
     if (isItSupportQuestion(message)) return previousTopic ? "new_or_related_issue" : "new_issue";
     if (isUnresolvedFollowUp(message) && previousTopic) return "unresolved_follow_up";
     if (isContextDetailFollowUp(message, history)) return "detail_follow_up";
@@ -911,9 +942,22 @@ export function addressUser(answer, name) {
   return `${cleanName}, ${text}`;
 }
 
-export async function resolveNameIntake({ message, history = [], nameClassifier } = {}) {
+export async function resolveNameIntake({ message, history = [], knowledgeBase, nameClassifier } = {}) {
   const text = String(message || "").trim();
   if (!text || getCapturedName(history)) return { handled: false };
+  const knowledgeMatch = knowledgeBase?.search(text);
+  const hasExplicitNameSyntax = nameLeadInPattern.test(text);
+  const hasKnowledgeIntent = /[?]|^(what|how|when|where|why|who|which|can|does?|is|are)\b|\b(policy|procedure|guide|entitlement|process|rule|form|benefit|leave)\b/i.test(text);
+  if (!hasExplicitNameSyntax && knowledgeMatch && (hasKnowledgeIntent || !isPlausibleNameCandidate(text))) {
+    return { handled: false };
+  }
+  if (!hasExplicitNameSyntax && knowledgeMatch && !nameClassifier) {
+    return {
+      handled: true,
+      source: "system",
+      answer: `Are you sharing your name, or asking about "${text}"? Please reply with "My name is ..." or ask the full question.`
+    };
+  }
 
   const pendingName = cleanHumanName(lastPendingName(history));
   if (pendingName && affirmativePattern.test(text)) {
@@ -992,16 +1036,33 @@ export async function resolveHelpdeskAnswer({
 }) {
   const triage = classifyHelpdeskTurn(message, history);
   const contextualMessage = triage.contextualMessage;
-  const finish = (result) => {
-    if (triage.type !== "unresolved_follow_up") return result;
+  const localMatch = knowledgeBase.search(contextualMessage);
+  const localResult = localMatch
+    ? await answerFromLocalKnowledge({ localMatch, contextualMessage, history, triage, openAiResponder })
+    : null;
+  const canTroubleshoot = Boolean(localMatch || triage.isInScope);
+
+  if (triage.type === "ticket_offer" && canTroubleshoot) {
     return {
-      source: "helpdesk_offer",
+      source: "ticket_offer",
+      ticketSubject: cleanTicketText(message, 180),
       answer:
-        `${result.answer}\n\nThis issue is still unresolved. Would you like to contact Helpdesk? Reply yes and I will prepare the conversation and ask for your email address.`
+        `${localResult ? `${localResult.answer}\n\n` : ""}` +
+        "This issue is still unresolved after several attempts. Would you like me to create a Helpdesk ticket using this conversation? Reply yes and I will reuse the available details and ask only for anything missing."
     };
-  };
+  }
+
+  if (triage.type === "needs_more_details" && canTroubleshoot) {
+    return {
+      source: "needs_more_details",
+      answer:
+        `${localResult ? `${localResult.answer}\n\n` : ""}` +
+        "I need a little more detail before trying again. Please share the exact error message, the device or application involved, any recent changes, and what happened after the steps you already tried."
+    };
+  }
 
   if (triage.type === "needs_clarification") {
+    if (localResult) return localResult;
     return {
       source: "needs_clarification",
       answer:
@@ -1010,6 +1071,7 @@ export async function resolveHelpdeskAnswer({
   }
 
   if (!triage.isInScope) {
+    if (localResult) return localResult;
     return {
       source: "out_of_scope",
       answer:
@@ -1017,67 +1079,54 @@ export async function resolveHelpdeskAnswer({
     };
   }
 
-  if (triage.type === "needs_escalation") {
-    return {
-      source: "helpdesk_escalation",
-      answer:
-        "This same issue has come up more than 5 times and may need a person to check it. Please contact IT Helpdesk. WhatsApp: +60122247105. If WhatsApp is available on this device, open https://wa.me/60122247105. Would you like me to prepare this conversation for IT Helpdesk? Reply yes to continue."
-    };
-  }
-
-  const localMatch = knowledgeBase.search(contextualMessage);
-  if (localMatch) {
-    if (openAiResponder) {
-      try {
-        const answer = await openAiResponder({
-          message: contextualMessage,
-          history,
-          triage,
-          localContext: {
-            documentName: localMatch.document.originalName,
-            excerpt: localMatch.excerpt,
-            matchedTerms: localMatch.matchedTerms
-          }
-        });
-        return finish({ source: "local_pdf", answer });
-      } catch {
-        return finish({
-          source: "openai_error",
-          answer: buildPdfFallbackAnswer(localMatch)
-        });
-      }
-    }
-
-    return finish({
-      source: "local_pdf",
-      answer: buildPdfFallbackAnswer(localMatch)
-    });
-  }
+  if (localResult) return localResult;
 
   if (openAiResponder) {
     try {
       const answer = await openAiResponder({ message: contextualMessage, history, triage });
-      return finish({ source: "openai", answer });
+      return { source: "openai", answer };
     } catch {
-      return finish({
+      return {
         source: "openai_error",
         answer: buildOfflineFallbackAnswer(message)
-      });
+      };
     }
   }
 
-  return finish({
+  return {
     source: "none",
     answer:
       "I could not find that in the uploaded PDF library, and the OpenAI API key is not configured yet. Please upload a relevant PDF or set OPENAI_API_KEY in .env."
-  });
+  };
+}
+
+async function answerFromLocalKnowledge({ localMatch, contextualMessage, history, triage, openAiResponder }) {
+  if (openAiResponder) {
+    try {
+      const answer = await openAiResponder({
+        message: contextualMessage,
+        history,
+        triage,
+        localContext: {
+          documentName: localMatch.document.originalName,
+          excerpt: localMatch.excerpt,
+          matchedTerms: localMatch.matchedTerms
+        }
+      });
+      return { source: "local_pdf", answer };
+    } catch {
+      return { source: "openai_error", answer: buildPdfFallbackAnswer(localMatch) };
+    }
+  }
+
+  return { source: "local_pdf", answer: buildPdfFallbackAnswer(localMatch) };
 }
 
 function buildPdfFallbackAnswer(localMatch) {
   return (
-    "Based on the uploaded helpdesk guide, please try this:\n\n" +
+    "Based on the uploaded knowledge, here is the relevant information:\n\n" +
     `${localMatch.excerpt}\n\n` +
-    "If this does not solve it, reply with what happened after trying these steps and I will continue troubleshooting."
+    "If this does not answer your question, reply with more detail and I will continue helping."
   );
 }
 

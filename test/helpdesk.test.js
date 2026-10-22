@@ -12,6 +12,8 @@ import {
   buildHelpdeskSummary,
   validateHelpdeskContact,
   wantsHelpdeskContact,
+  wantsTicketCreation,
+  beginTicketIntakeFromOffer,
   getOpenAiModel,
   getAdminPassword,
   createUploadedPdfDocument,
@@ -146,6 +148,59 @@ test("answer resolution uses local PDF knowledge before OpenAI fallback", async 
   assert.equal(responderRequest.localContext.documentName, "VPN Guide.pdf");
 });
 
+test("answer resolution uses matching local knowledge for a non-IT question", async () => {
+  const knowledge = createKnowledgeBase();
+  knowledge.addDocument({
+    id: "leave-policy",
+    originalName: "Employee Leave Policy.pdf",
+    text: "Annual leave entitlement is fourteen days for confirmed employees. Apply through the HR portal."
+  });
+
+  let responderRequest;
+  const answer = await resolveHelpdeskAnswer({
+    message: "What is the annual leave entitlement?",
+    history: [],
+    knowledgeBase: knowledge,
+    openAiResponder: async (request) => {
+      responderRequest = request;
+      return "Confirmed employees receive fourteen days of annual leave.";
+    }
+  });
+
+  assert.equal(answer.source, "local_pdf");
+  assert.match(answer.answer, /fourteen days/i);
+  assert.equal(responderRequest.localContext.documentName, "Employee Leave Policy.pdf");
+});
+
+test("repeated local-knowledge answers remain visible with detail and ticket prompts", async () => {
+  const knowledge = createKnowledgeBase([{
+    id: "leave-policy",
+    originalName: "Employee Leave Policy.pdf",
+    text: "Annual leave entitlement is fourteen days for confirmed employees."
+  }]);
+  const responder = async () => "Confirmed employees receive fourteen days of annual leave.";
+
+  const third = await resolveHelpdeskAnswer({
+    message: "What is the annual leave entitlement?",
+    history: Array.from({ length: 3 }, () => ({ role: "user", content: "What is the annual leave entitlement?" })),
+    knowledgeBase: knowledge,
+    openAiResponder: responder
+  });
+  const sixth = await resolveHelpdeskAnswer({
+    message: "What is the annual leave entitlement?",
+    history: Array.from({ length: 6 }, () => ({ role: "user", content: "What is the annual leave entitlement?" })),
+    knowledgeBase: knowledge,
+    openAiResponder: responder
+  });
+
+  assert.equal(third.source, "needs_more_details");
+  assert.match(third.answer, /fourteen days/i);
+  assert.match(third.answer, /more detail/i);
+  assert.equal(sixth.source, "ticket_offer");
+  assert.match(sixth.answer, /fourteen days/i);
+  assert.match(sixth.answer, /create.*ticket/i);
+});
+
 test("weak unrelated PDF matches do not block OpenAI fallback", async () => {
   const knowledge = createKnowledgeBase();
   knowledge.addDocument({
@@ -234,7 +289,7 @@ test("Ava politely rejects non-IT support questions", async () => {
   assert.match(answer.answer, /IT support/i);
 });
 
-test("Ava treats unresolved follow-up text as part of the previous IT issue", async () => {
+test("Ava keeps unresolved follow-up text in the previous IT issue context", async () => {
   const history = [
     { role: "user", content: "Printer cannot print after restart" },
     {
@@ -255,7 +310,7 @@ test("Ava treats unresolved follow-up text as part of the previous IT issue", as
     }
   });
 
-  assert.equal(answer.source, "helpdesk_offer");
+  assert.equal(answer.source, "openai");
   assert.match(responderMessage, /Printer cannot print/i);
   assert.match(responderMessage, /try all, still same/i);
 });
@@ -397,26 +452,173 @@ test("Ava does not mistake a first IT issue for a name", async () => {
   assert.equal(classifierCalls, 0);
 });
 
-test("Ava escalates repeated unresolved questions after more than five attempts", async () => {
-  const history = Array.from({ length: 6 }, () => ({
+test("Ava asks for more details on the third occurrence of the same unresolved question", async () => {
+  const history = Array.from({ length: 3 }, () => ({
     role: "user",
     content: "VPN will not connect"
   }));
-
-  assert.equal(repeatedUnsolvedCount("VPN will not connect", history), 6);
 
   const answer = await resolveHelpdeskAnswer({
     message: "VPN will not connect",
     history,
     knowledgeBase: createKnowledgeBase(),
-    openAiResponder: async () => {
-      throw new Error("Connection error.");
-    }
+    openAiResponder: async () => "Restart the VPN client."
   });
 
-  assert.equal(answer.source, "helpdesk_escalation");
-  assert.match(answer.answer, /\+60122247105/);
-  assert.match(answer.answer, /wa\.me\/60122247105/);
+  assert.equal(repeatedUnsolvedCount("VPN will not connect", history), 3);
+  assert.equal(answer.source, "needs_more_details");
+  assert.match(answer.answer, /error|device|tried/i);
+});
+
+test("Ava continues answering on the fifth occurrence before offering a ticket", async () => {
+  const history = Array.from({ length: 5 }, () => ({
+    role: "user",
+    content: "VPN will not connect"
+  }));
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "VPN will not connect",
+    history,
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async () => "Please share the VPN error code shown after sign-in."
+  });
+
+  assert.equal(answer.source, "openai");
+  assert.match(answer.answer, /error code/i);
+});
+
+test("Ava offers conversational ticket creation on the sixth occurrence", async () => {
+  const history = Array.from({ length: 6 }, () => ({
+    role: "user",
+    content: "VPN will not connect"
+  }));
+
+  const answer = await resolveHelpdeskAnswer({
+    message: "VPN will not connect",
+    history,
+    knowledgeBase: createKnowledgeBase(),
+    openAiResponder: async () => "Restart the VPN client."
+  });
+
+  assert.equal(answer.source, "ticket_offer");
+  assert.match(answer.answer, /create.*ticket/i);
+  assert.match(answer.answer, /conversation/i);
+});
+
+test("accepting a ticket offer starts intake using the existing conversation", () => {
+  const history = [
+    { role: "user", content: "Printer cannot print" },
+    { role: "assistant", content: "Restart the print spooler." },
+    { role: "user", content: "VPN will not connect" },
+    { role: "assistant", content: "Please share the exact error." },
+    { role: "user", content: "Yes, Windows 11 laptop shows error 809 after sign-in" },
+    { role: "assistant", content: "Would you like me to create a ticket?", source: "ticket_offer", ticketSubject: "VPN will not connect" },
+    { role: "user", content: "yes" }
+  ];
+
+  assert.equal(wantsTicketCreation("yes", history), true);
+  const state = beginTicketIntakeFromOffer({ message: "yes", history });
+
+  assert.equal(state.complete, false);
+  assert.equal(state.draft.subject, "VPN will not connect");
+  assert.match(state.draft.description, /VPN will not connect/i);
+  assert.match(state.draft.description, /Yes, Windows 11 laptop shows error 809/i);
+  assert.doesNotMatch(state.draft.description, /Printer cannot print/i);
+  assert.equal(state.nextField, "requesterName");
+
+  const signedInState = beginTicketIntakeFromOffer({
+    message: "yes",
+    history,
+    profile: { fullName: "Mei Lin", email: "mei@example.com", department: "Finance" }
+  });
+  assert.equal(signedInState.draft.requesterName, "Mei Lin");
+  assert.equal(signedInState.draft.email, "mei@example.com");
+  assert.equal(signedInState.draft.department, "Finance");
+  assert.equal(signedInState.nextField, "category");
+});
+
+test("matching local knowledge bypasses name intake for a direct non-IT query", async () => {
+  const knowledge = createKnowledgeBase([{
+    id: "leave-policy",
+    originalName: "Employee Leave Policy.pdf",
+    text: "Annual leave policy entitlement for confirmed employees."
+  }]);
+
+  const result = await resolveNameIntake({
+    message: "annual leave policy",
+    history: [],
+    knowledgeBase: knowledge
+  });
+
+  assert.equal(result.handled, false);
+});
+
+test("a one-word name mentioned in local knowledge still uses name intake", async () => {
+  const knowledge = createKnowledgeBase([{
+    id: "directory",
+    originalName: "Employee Directory.pdf",
+    text: "Alice works in the Finance department."
+  }]);
+
+  const result = await resolveNameIntake({
+    message: "Alice",
+    history: [],
+    knowledgeBase: knowledge,
+    nameClassifier: async () => ({ decision: "name", name: "Alice" })
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.profileName, "Alice");
+});
+
+test("ambiguous local matches use name classification instead of capitalization guesses", async () => {
+  const knowledge = createKnowledgeBase([{
+    id: "directory-payroll",
+    originalName: "Directory and Payroll.pdf",
+    text: "Mei Lin works in Finance. Payroll is processed on the final working day."
+  }]);
+
+  const name = await resolveNameIntake({
+    message: "mei lin",
+    history: [],
+    knowledgeBase: knowledge,
+    nameClassifier: async () => ({ decision: "name", name: "Mei Lin" })
+  });
+  const query = await resolveNameIntake({
+    message: "Payroll",
+    history: [],
+    knowledgeBase: knowledge,
+    nameClassifier: async () => ({ decision: "not_name", name: "" })
+  });
+
+  assert.equal(name.handled, true);
+  assert.equal(name.profileName, "Mei Lin");
+  assert.equal(query.handled, false);
+});
+
+test("explicit name syntax exits local-knowledge ambiguity without a classifier", async () => {
+  const knowledge = createKnowledgeBase([{
+    id: "directory",
+    originalName: "Employee Directory.pdf",
+    text: "Mei Lin works in the Finance department."
+  }]);
+
+  const ambiguous = await resolveNameIntake({
+    message: "mei lin",
+    history: [],
+    knowledgeBase: knowledge
+  });
+  const explicitName = await resolveNameIntake({
+    message: "My name is Mei Lin",
+    history: [{ role: "assistant", content: ambiguous.answer, source: ambiguous.source }],
+    knowledgeBase: knowledge
+  });
+
+  assert.equal(ambiguous.handled, true);
+  assert.match(ambiguous.answer, /name.*or asking/i);
+  assert.equal(explicitName.handled, true);
+  assert.equal(explicitName.pendingName, "Mei Lin");
+  assert.match(explicitName.answer, /confirm/i);
 });
 
 test("published Sites frontend points API calls to the local Ava server", () => {
@@ -1243,7 +1445,7 @@ test("Ava recognizes agreement immediately after offering Helpdesk escalation", 
   assert.equal(wantsHelpdeskContact("yes", [{ role: "assistant", source: "openai", content: "Try again" }]), false);
 });
 
-test("Ava offers Helpdesk escalation when troubleshooting remains unresolved", async () => {
+test("Ava continues troubleshooting after the first unresolved follow-up", async () => {
   const answer = await resolveHelpdeskAnswer({
     message: "still not working",
     history: [
@@ -1254,10 +1456,9 @@ test("Ava offers Helpdesk escalation when troubleshooting remains unresolved", a
     openAiResponder: async () => "Please check whether the printer shows an error code."
   });
 
-  assert.equal(answer.source, "helpdesk_offer");
+  assert.equal(answer.source, "openai");
   assert.match(answer.answer, /printer shows an error code/i);
-  assert.match(answer.answer, /contact Helpdesk/i);
-  assert.match(answer.answer, /yes/i);
+  assert.doesNotMatch(answer.answer, /contact Helpdesk/i);
 });
 
 test("fallback helpdesk summary records the user, issue, and transcript", () => {

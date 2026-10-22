@@ -26,6 +26,7 @@ import {
 import {
   addressUser,
   buildHelpdeskContactDraft,
+  beginTicketIntakeFromOffer,
   buildHelpdeskSummary,
   createConversationLogger,
   createHelpdeskTicket,
@@ -47,7 +48,8 @@ import {
   validateHelpdeskContact,
   validateTicketDateRange,
   validateTicketInput,
-  wantsHelpdeskContact
+  wantsHelpdeskContact,
+  wantsTicketCreation
 } from "./helpdesk-core.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -231,6 +233,30 @@ app.post("/api/chat", async (req, res) => {
     await hydrateSession(sessionId);
     const userMessage = sessions.addMessage(sessionId, { role: "user", content: message });
     const history = sessions.getMessages(sessionId);
+    let ticketProfile = null;
+    if (wantsTicketCreation(message, history) && bearerToken(req)) {
+      ticketProfile = await authService.requireRole(bearerToken(req), "user");
+    }
+    const offeredTicketIntake = beginTicketIntakeFromOffer({ message, history, profile: ticketProfile });
+    if (offeredTicketIntake) {
+      const assistantMessage = sessions.addMessage(sessionId, {
+        role: "assistant",
+        content: offeredTicketIntake.answer,
+        source: "ticket_intake",
+        ticketDraft: offeredTicketIntake.draft,
+        timestamp: new Date().toISOString()
+      });
+      await sessions.save();
+      await saveSession(sessionId);
+      res.json({
+        sessionId,
+        intakeActive: true,
+        nextField: offeredTicketIntake.nextField,
+        messages: [userMessage, assistantMessage],
+        answer: offeredTicketIntake.answer
+      });
+      return;
+    }
     if (wantsHelpdeskContact(message, history)) {
       const assistantMessage = sessions.addMessage(sessionId, {
         role: "assistant",
@@ -251,6 +277,7 @@ app.post("/api/chat", async (req, res) => {
     const nameResult = await resolveNameIntake({
       message,
       history,
+      knowledgeBase,
       nameClassifier: hasUsableOpenAiKey() ? classifyHumanNameWithOpenAi : null
     });
 
@@ -284,7 +311,8 @@ app.post("/api/chat", async (req, res) => {
     const assistantMessage = sessions.addMessage(sessionId, {
       role: "assistant",
       content: personalizedAnswer,
-      source: result.source
+      source: result.source,
+      ticketSubject: result.ticketSubject
     });
     await sessions.save();
     await saveSession(sessionId);
@@ -792,7 +820,7 @@ function hasUsableOpenAiKey() {
 async function openAiResponder({ message, history, localContext, triage }) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const systemPrompt = localContext
-    ? "You are Ava, an IT helpdesk chatbot. The local PDF knowledge base was searched first and a relevant excerpt is provided. Answer politely and clearly using only the provided local PDF excerpt and the recent conversation. Do not mention that you are searching, do not say 'I found this in', and do not invent steps outside the excerpt. If the excerpt is not enough, ask one focused follow-up question."
+    ? "You are Ava, an internal knowledge and IT helpdesk assistant. A relevant excerpt from the local PDF knowledge base is provided. Answer politely and clearly using only the provided excerpt and the recent conversation, even when the topic is not IT-related. Do not mention that you are searching, do not say 'I found this in', and do not invent information outside the excerpt. If the excerpt is not enough, ask one focused follow-up question."
     : "You are Ava, an IT helpdesk chatbot. Be concise, practical, and safe. The local PDF knowledge base was already searched and did not contain an answer. Treat follow-up messages like 'still same', 'try all', or 'not solved' as the same support case from the recent conversation.";
   const localContextMessage = localContext
     ? [

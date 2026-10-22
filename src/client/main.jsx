@@ -89,9 +89,10 @@ const api = {
   async session(sessionId) {
     return request(`/api/session/${sessionId}`);
   },
-  async chat(sessionId, message) {
+  async chat(sessionId, message, token = "") {
     return request("/api/chat", {
       method: "POST",
+      headers: authHeaders(token),
       body: JSON.stringify({ sessionId, message })
     });
   },
@@ -695,7 +696,7 @@ function ChatPage({ panelMode = "full", auth, sessionId, onSessionEnded, onTicke
     try {
       const response = intakeActive
         ? await api.answerTicketIntake(sessionId, text, auth?.token)
-        : await api.chat(sessionId, text);
+        : await api.chat(sessionId, text, auth?.token);
       setMessages((current) => [...current.filter((item) => item.content !== text || item.role !== "user"), ...response.messages]);
       setIntakeActive(Boolean(response.intakeActive));
       if (response.ticketCreated) onTicketCreated?.(response);
@@ -797,7 +798,7 @@ function ChatPage({ panelMode = "full", auth, sessionId, onSessionEnded, onTicke
         <textarea
           value={message}
           onChange={(event) => setMessage(event.target.value)}
-          placeholder="Type your IT support question..."
+          placeholder="Ask Ava a question..."
           rows="2"
         />
         <button className="icon-button pressable" type="submit" disabled={busy} aria-label="Send message">
@@ -863,8 +864,10 @@ function Message({ message }) {
     openai_error: "AI unavailable",
     out_of_scope: "IT support only",
     needs_clarification: "More detail needed",
+    needs_more_details: "More detail needed",
     helpdesk_escalation: "Contact IT",
     helpdesk_offer: "Contact IT",
+    ticket_offer: "Create ticket",
     helpdesk_contact: "Contact IT",
     ticket_intake: "Ticket intake",
     ticket_created: "Ticket created"
