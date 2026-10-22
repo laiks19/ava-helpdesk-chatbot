@@ -5,6 +5,7 @@ import multer from "multer";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pdfParse from "pdf-parse";
 import OpenAI from "openai";
@@ -14,6 +15,17 @@ import { bearerToken, createAuthService } from "./auth-service.js";
 import { createAiNewsStore } from "./ai-news-store.js";
 import { authorizeCron, refreshAiNews } from "./ai-news.js";
 import { runHelpdeskManagerQuery } from "./helpdesk-manager.js";
+import {
+  canAccessTicketAttachment,
+  createTicketAttachmentClaim,
+  createTicketAttachmentStorage,
+  createUploadIntentLimiter,
+  maxTicketAttachmentBytes,
+  maxTicketAttachments,
+  validateTicketAttachmentContents,
+  validateTicketAttachments,
+  verifyTicketAttachmentClaim
+} from "./ticket-attachments.js";
 import {
   createSupabaseRestClient,
   getSupabaseConfig,
@@ -59,6 +71,7 @@ dotenv.config({ path: path.join(projectRoot, ".env.local"), override: true });
 
 const dataDir = path.join(projectRoot, "data");
 const pdfDir = path.join(dataDir, "pdfs");
+const ticketAttachmentDir = path.join(dataDir, "ticket-attachments");
 const indexPath = path.join(dataDir, "pdf-index.json");
 const ticketsPath = path.join(dataDir, "tickets.json");
 const usersPath = path.join(dataDir, "users.json");
@@ -78,10 +91,13 @@ const port = process.env.PORT || 3001;
 const adminUsername = process.env.AVA_ADMIN_USERNAME || "kokseng.lai@ecoworld.my";
 let adminPassword = getAdminPassword();
 const adminToken = process.env.AVA_ADMIN_TOKEN || "ava-local-admin";
+const attachmentClaimSecret = process.env.SUPABASE_SERVICE_ROLE_KEY || adminToken;
+const uploadIntentLimiter = createUploadIntentLimiter();
 let localAdminMustChangePassword = true;
 
 if (!isVercel || !supabaseEnabled) {
   await mkdir(pdfDir, { recursive: true });
+  await mkdir(ticketAttachmentDir, { recursive: true });
   await mkdir(helpdeskLogDir, { recursive: true });
 }
 
@@ -127,6 +143,14 @@ const upload = multer({
   },
   limits: { fileSize: 50 * 1024 * 1024, files: maxPdfFiles }
 });
+const ticketUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: maxTicketAttachmentBytes, files: maxTicketAttachments }
+});
+const ticketAttachmentStorage = createTicketAttachmentStorage({
+  supabase: supabaseAdmin,
+  localDir: ticketAttachmentDir
+});
 
 const app = express();
 app.use(cors());
@@ -146,20 +170,105 @@ app.get("/api/ai-news", asyncRoute(async (_req, res) => {
   res.json(await aiNewsStore.list());
 }));
 
-app.post("/api/tickets", asyncRoute(async (req, res) => {
-  const validation = validateTicketInput(req.body || {});
+app.post("/api/ticket-attachments/upload-intent", asyncRoute(async (req, res) => {
+  const clientKey = String(req.headers["x-forwarded-for"] || req.ip || "unknown").split(",")[0].trim();
+  if (!uploadIntentLimiter.allow(clientKey)) {
+    res.status(429).json({ error: "Too many attachment upload requests. Please wait and try again." });
+    return;
+  }
+  const file = {
+    originalname: String(req.body?.originalName || ""),
+    mimetype: String(req.body?.contentType || ""),
+    size: Number(req.body?.sizeBytes)
+  };
+  const validation = validateTicketAttachments([file]);
   if (!validation.valid) {
     res.status(400).json({ error: validation.error });
     return;
   }
+  const upload = await ticketAttachmentStorage.createUploadIntent(file);
+  if (!upload) {
+    res.status(503).json({ error: "Direct attachment upload is not available in local mode." });
+    return;
+  }
+  const attachment = {
+    originalName: file.originalname,
+    storagePath: upload.storagePath,
+    contentType: file.mimetype,
+    sizeBytes: file.size,
+    createdAt: new Date().toISOString()
+  };
+  res.json({
+    bucket: "ticket-attachments",
+    uploadToken: upload.uploadToken,
+    attachment: { ...attachment, claim: createTicketAttachmentClaim(attachment, attachmentClaimSecret) }
+  });
+}));
+
+app.post("/api/tickets", ticketUpload.array("attachments", maxTicketAttachments), asyncRoute(async (req, res) => {
+  const input = ticketRequestBody(req);
+  const validation = validateTicketInput(input);
+  if (!validation.valid) {
+    res.status(400).json({ error: validation.error });
+    return;
+  }
+  const attachmentValidation = validateTicketAttachments(req.files || []);
+  if (!attachmentValidation.valid) {
+    res.status(400).json({ error: attachmentValidation.error });
+    return;
+  }
+  const contentValidation = validateTicketAttachmentContents(req.files || []);
+  if (!contentValidation.valid) {
+    res.status(400).json({ error: contentValidation.error });
+    return;
+  }
+  const attachmentClaims = Array.isArray(input.attachmentClaims) ? input.attachmentClaims : [];
+  if (attachmentClaims.length > maxTicketAttachments || (attachmentClaims.length && req.files?.length)) {
+    res.status(400).json({ error: `Attach up to ${maxTicketAttachments} files per ticket.` });
+    return;
+  }
+  const claimedAttachments = [];
+  for (const claim of attachmentClaims) {
+    const verified = verifyTicketAttachmentClaim(claim, attachmentClaimSecret);
+    if (!verified.valid) {
+      res.status(400).json({ error: verified.error });
+      return;
+    }
+    claimedAttachments.push({ ...verified.attachment, id: randomUUID() });
+  }
+  if (new Set(claimedAttachments.map((item) => item.storagePath)).size !== claimedAttachments.length) {
+    res.status(400).json({ error: "Duplicate attachment uploads are not allowed." });
+    return;
+  }
   let profile = null;
   if (bearerToken(req)) profile = await authService.requireRole(bearerToken(req), "user");
-  const ticket = await helpdeskStore.createTicket(validation.ticket, {
-    source: req.body?.source || "form",
-    requesterUserId: profile?.id || "",
-    actorUserId: profile?.id || ""
-  });
-  res.status(201).json(shapeTicketCreationResponse(ticket));
+  let ticket = null;
+  let storedAttachments = [];
+  try {
+    for (const attachment of claimedAttachments) {
+      await ticketAttachmentStorage.verifyStoredAttachment(attachment);
+    }
+    ticket = await helpdeskStore.createTicket(validation.ticket, {
+      source: input.source || "form",
+      requesterUserId: profile?.id || "",
+      actorUserId: profile?.id || ""
+    });
+    if (req.files?.length) {
+      storedAttachments = await ticketAttachmentStorage.save(ticket.recordId || ticket.id, req.files);
+    } else {
+      storedAttachments = claimedAttachments;
+    }
+    if (storedAttachments.length) {
+      const attachments = await helpdeskStore.addTicketAttachments(ticket.id, storedAttachments, profile?.id || "");
+      ticket = { ...ticket, attachments };
+    }
+    res.status(201).json(shapeTicketCreationResponse(ticket));
+  } catch (error) {
+    if (ticket) await helpdeskStore.rollbackTicketCreation(ticket.id).catch(() => {});
+    const cleanupCandidates = storedAttachments.length ? storedAttachments : claimedAttachments;
+    await removeUnreferencedAttachments(cleanupCandidates).catch(() => {});
+    throw error;
+  }
 }));
 
 app.get("/api/me", requireAuthenticated, asyncRoute(async (req, res) => {
@@ -170,6 +279,16 @@ app.get("/api/me/tickets", requireApprovedUser, asyncRoute(async (req, res) => {
   const ownTickets = (await helpdeskStore.listTickets())
     .filter((ticket) => ticket.requesterUserId === req.profile.id);
   res.json({ tickets: ownTickets });
+}));
+
+app.get("/api/ticket-attachments/:id/download", requireApprovedUser, asyncRoute(async (req, res) => {
+  const { attachment, ticket } = await helpdeskStore.getTicketAttachment(req.params.id);
+  if (!canAccessTicketAttachment(req.profile, ticket)) {
+    res.status(403).json({ error: "You do not have access to this attachment." });
+    return;
+  }
+  const url = await ticketAttachmentStorage.createDownloadUrl(attachment);
+  res.json({ url, filename: attachment.originalName });
 }));
 
 app.get("/api/admin/tickets", requireAdmin, asyncRoute(async (_req, res) => {
@@ -452,6 +571,11 @@ app.get("/api/cron/ai-news", requireCronSecret, asyncRoute(async (_req, res) => 
     ok: result.status !== "failed",
     ...result
   });
+}));
+
+app.get("/api/cron/ticket-attachments/cleanup", requireCronSecret, asyncRoute(async (_req, res) => {
+  const referencedPaths = await helpdeskStore.listAttachmentStoragePaths();
+  res.json(await ticketAttachmentStorage.cleanupPending({ referencedPaths }));
 }));
 
 app.get("/api/session/:sessionId", (req, res) => {
@@ -798,6 +922,23 @@ function asyncRoute(handler) {
   };
 }
 
+function ticketRequestBody(req) {
+  if (!req.body?.ticket) return req.body || {};
+  try {
+    return JSON.parse(req.body.ticket);
+  } catch {
+    const error = new Error("Ticket details are invalid. Please review the form and try again.");
+    error.status = 400;
+    throw error;
+  }
+}
+
+async function removeUnreferencedAttachments(attachments = []) {
+  const paths = attachments.map((attachment) => attachment.storagePath).filter(Boolean);
+  const unreferenced = await helpdeskStore.unreferencedAttachmentPaths(paths);
+  if (unreferenced.length) await ticketAttachmentStorage.remove(unreferenced);
+}
+
 function cleanupUploadedFiles(files) {
   for (const file of files) {
     if (file.path) fs.rmSync(file.path, { force: true });
@@ -805,6 +946,8 @@ function cleanupUploadedFiles(files) {
 }
 
 function uploadErrorMessage(error) {
+  if (error?.code === "LIMIT_FILE_SIZE") return "Each attachment must be 10 MB or smaller.";
+  if (error?.code === "LIMIT_FILE_COUNT" || error?.code === "LIMIT_UNEXPECTED_FILE") return "Attach up to 5 files per ticket.";
   const message = error.message || "Unable to upload PDF files.";
   if (/pdf/i.test(message)) {
     return "Ava could not read one of the PDF files. Please upload a valid, text-readable PDF.";

@@ -173,7 +173,10 @@ test("cron authorization requires an exact configured bearer secret", () => {
 
 test("Vercel schedules the secured news refresh for 8 AM Malaysia time", async () => {
   const config = JSON.parse(await readFile(path.join(process.cwd(), "vercel.json"), "utf8"));
-  assert.deepEqual(config.crons, [{ path: "/api/cron/ai-news", schedule: "0 0 * * *" }]);
+  assert.deepEqual(
+    config.crons.find((cron) => cron.path === "/api/cron/ai-news"),
+    { path: "/api/cron/ai-news", schedule: "0 0 * * *" }
+  );
   const source = await readFile(path.join(process.cwd(), "src", "server", "server.js"), "utf8");
   assert.match(source, /app\.get\("\/api\/cron\/ai-news", requireCronSecret/);
   assert.match(source, /app\.get\("\/api\/ai-news"/);

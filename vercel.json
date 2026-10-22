@@ -35,6 +35,10 @@
     {
       "path": "/api/cron/ai-news",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/ticket-attachments/cleanup",
+      "schedule": "30 1 * * *"
     }
   ]
 }

@@ -11,6 +11,7 @@ import {
 import { AdminConsole } from "./admin-console.jsx";
 import { AiNews } from "./ai-news.jsx";
 import { AuthDialog, AuthProvider, useAuth } from "./auth.jsx";
+import { getSupabaseBrowserClient } from "./supabase-client.js";
 import "./styles.css";
 
 const API_BASE_URL = getApiBaseUrl();
@@ -38,12 +39,38 @@ const api = {
   async aiNews() {
     return request("/api/ai-news");
   },
-  async createTicket(ticket, token = "") {
+  async createTicket(ticket, attachments = [], token = "") {
+    const supabase = getSupabaseBrowserClient();
+    if (attachments.length && supabase) {
+      const attachmentClaims = [];
+      for (const file of attachments) {
+        const intent = await request("/api/ticket-attachments/upload-intent", {
+          method: "POST",
+          body: JSON.stringify({ originalName: file.name, contentType: file.type, sizeBytes: file.size })
+        });
+        const { error } = await supabase.storage
+          .from(intent.bucket)
+          .uploadToSignedUrl(intent.attachment.storagePath, intent.uploadToken, file, { contentType: file.type });
+        if (error) throw new Error(`Unable to upload ${file.name}. ${error.message}`);
+        attachmentClaims.push(intent.attachment);
+      }
+      return request("/api/tickets", {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ ...ticket, attachmentClaims })
+      });
+    }
+    const form = new FormData();
+    form.append("ticket", JSON.stringify(ticket));
+    attachments.forEach((file) => form.append("attachments", file));
     return request("/api/tickets", {
       method: "POST",
       headers: authHeaders(token),
-      body: JSON.stringify(ticket)
+      body: form
     });
+  },
+  async attachmentDownload(token, id) {
+    return request(`/api/ticket-attachments/${encodeURIComponent(id)}/download`, { headers: authHeaders(token) });
   },
   async me(token) {
     return request("/api/me", { headers: authHeaders(token) });
@@ -278,8 +305,8 @@ function App() {
     location.hash = "#submit";
   }
 
-  async function createTicket(ticket) {
-    const result = await api.createTicket(ticket, auth.token);
+  async function createTicket(ticket, attachments) {
+    const result = await api.createTicket(ticket, attachments, auth.token);
     openTicketEmail(result.ticket);
     return result.ticket;
   }
@@ -319,6 +346,7 @@ function App() {
                 tickets={ticketHistory}
                 loading={ticketHistoryLoading}
                 notice={ticketHistoryNotice}
+                token={auth.token}
               />
             ) : null}
             <section className="assistant-column" id="ava">
@@ -383,6 +411,8 @@ function Header({ activeRoute, auth, onOpenAuth }) {
 
 function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, requiresConfirmation = false }) {
   const [ticket, setTicket] = useState(initialTicket);
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [dialog, setDialog] = useState(null);
@@ -399,8 +429,10 @@ function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, re
     setBusy(true);
     setNotice("");
     try {
-      const created = await onSubmit(ticket);
+      const created = await onSubmit(ticket, attachments);
       setTicket(defaultTicket);
+      setAttachments([]);
+      setAttachmentInputKey((current) => current + 1);
       onClearDraft();
       onCreated?.(created);
       if (requiresConfirmation) {
@@ -431,6 +463,8 @@ function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, re
 
   function clearForm() {
     setTicket(defaultTicket);
+    setAttachments([]);
+    setAttachmentInputKey((current) => current + 1);
     onClearDraft();
     setNotice("");
   }
@@ -483,9 +517,41 @@ function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, re
           required
         />
       </Field>
-      <div className="attachment-drop">
-        <Icon name="paperclip" />
-        <span>Attachment placeholder: PDF, JPG, PNG, ZIP up to 10 MB</span>
+      <div className="attachment-picker">
+        <input
+          key={attachmentInputKey}
+          type="file"
+          multiple
+          id="ticket-attachments"
+          accept=".pdf,.jpg,.jpeg,.png,.zip,application/pdf,image/jpeg,image/png,application/zip"
+          onChange={(event) => {
+            const selected = [...event.target.files];
+            if (selected.length > 5) {
+              setNotice("Attach up to 5 files per ticket.");
+              event.target.value = "";
+              return;
+            }
+            const oversized = selected.find((file) => file.size > 10 * 1024 * 1024);
+            if (oversized) {
+              setNotice(`${oversized.name} exceeds the 10 MB limit.`);
+              event.target.value = "";
+              return;
+            }
+            setAttachments(selected);
+            setNotice("");
+          }}
+        />
+        <label className="attachment-drop" htmlFor="ticket-attachments">
+          <Icon name="paperclip" />
+          <span><strong>Choose attachments</strong><small>PDF, JPG, PNG, or ZIP · up to 5 files · 10 MB each</small></span>
+        </label>
+        {attachments.length ? (
+          <ul className="selected-attachments">
+            {attachments.map((file, index) => (
+              <li key={`${file.name}-${file.size}`}><span>{file.name}<small>{formatFileSize(file.size)}</small></span><button type="button" onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove ${file.name}`}>×</button></li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       {notice ? <p className="notice compact">{notice}</p> : null}
       <div className="form-actions">
@@ -502,6 +568,7 @@ function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, re
         <TicketConfirmationDialog
           stage={dialog.stage}
           ticket={dialog.ticket || ticket}
+          attachments={attachments}
           error={dialog.error}
           busy={busy}
           onBack={() => setDialog(null)}
@@ -513,7 +580,7 @@ function TicketSubmission({ initialTicket, onSubmit, onCreated, onClearDraft, re
   );
 }
 
-function TicketConfirmationDialog({ stage, ticket, error, busy, onBack, onConfirm, onClose }) {
+function TicketConfirmationDialog({ stage, ticket, attachments = [], error, busy, onBack, onConfirm, onClose }) {
   if (stage === "success") {
     return (
       <div className="dialog-backdrop" role="presentation">
@@ -536,7 +603,8 @@ function TicketConfirmationDialog({ stage, ticket, error, busy, onBack, onConfir
     ["Asset / Device", ticket.asset || "-"],
     ["Subject", ticket.subject],
     ["Location", ticket.location || "-"],
-    ["Description", ticket.description]
+    ["Description", ticket.description],
+    ["Attachments", attachments.length ? attachments.map((file) => file.name).join(", ") : "None"]
   ];
 
   return (
@@ -569,7 +637,7 @@ function TicketConfirmationDialog({ stage, ticket, error, busy, onBack, onConfir
   );
 }
 
-function SubmissionHistory({ tickets, loading, notice }) {
+function SubmissionHistory({ tickets, loading, notice, token }) {
   return (
     <aside className="submission-history panel" aria-labelledby="submission-history-title">
       <div className="history-heading">
@@ -597,6 +665,7 @@ function SubmissionHistory({ tickets, loading, notice }) {
               <span>{ticket.category}</span>
               <time>{formatDate(ticket.createdAt)}</time>
             </div>
+            <AttachmentLinks attachments={ticket.attachments} token={token} />
           </article>
         ))}
       </div>
@@ -630,10 +699,10 @@ function MyTickets({ auth, onOpenAuth }) {
   if (auth.approvalStatus !== "approved") {
     return <main className="account-page"><section className="account-empty panel"><Icon name="clock" /><h1>Approval {auth.approvalStatus || "pending"}</h1><p>Your account is waiting for MIS administrator approval. You may continue to submit tickets as a guest.</p><a className="primary-button link-button" href="#submit">Submit guest ticket</a></section></main>;
   }
-  return <main className="account-page"><section className="dashboard panel"><div className="section-title"><Icon name="user" /><div><h1>My Tickets</h1><p>Requests created while signed in to {auth.profile.email}.</p></div></div>{notice ? <p className="notice compact">{notice}</p> : null}<TicketTable tickets={tickets} manageLink={false} /></section></main>;
+  return <main className="account-page"><section className="dashboard panel"><div className="section-title"><Icon name="user" /><div><h1>My Tickets</h1><p>Requests created while signed in to {auth.profile.email}.</p></div></div>{notice ? <p className="notice compact">{notice}</p> : null}<TicketTable tickets={tickets} manageLink={false} token={auth.token} /></section></main>;
 }
 
-function TicketTable({ tickets, manageLink = true }) {
+function TicketTable({ tickets, manageLink = true, token = "" }) {
   return (
     <article className="ticket-table">
       <div className="table-title">
@@ -641,7 +710,7 @@ function TicketTable({ tickets, manageLink = true }) {
         {manageLink ? <a href="#admin">Manage Tickets</a> : null}
       </div>
       <div className="table-head">
-        <span>#</span><span>Subject</span><span>Requester</span><span>Department</span><span>Priority</span><span>Status</span><span>Created</span>
+        <span>#</span><span>Subject</span><span>Requester</span><span>Department</span><span>Priority</span><span>Status</span><span>Created</span><span>Attachments</span>
       </div>
       {tickets.map((ticket) => (
         <div className="table-row" key={ticket.id}>
@@ -652,11 +721,31 @@ function TicketTable({ tickets, manageLink = true }) {
           <span><i className={`dot ${String(ticket.priority).toLowerCase()}`} />{ticket.priority}</span>
           <span className={`status-pill ${slug(ticket.status)}`}>{ticket.status}</span>
           <span>{formatDate(ticket.createdAt)}</span>
+          <AttachmentLinks attachments={ticket.attachments} token={token} />
         </div>
       ))}
       {!tickets.length ? <p className="notice compact">No submitted tickets yet.</p> : null}
     </article>
   );
+}
+
+function AttachmentLinks({ attachments = [], token }) {
+  if (!attachments.length) return <span className="attachment-empty">None</span>;
+  return (
+    <span className="attachment-links">
+      {attachments.map((attachment) => (
+        <button type="button" key={attachment.id} title={`Download ${attachment.originalName}`} onClick={async () => {
+          const result = await api.attachmentDownload(token, attachment.id);
+          window.location.assign(result.url);
+        }}><Icon name="paperclip" />{attachment.originalName}</button>
+      ))}
+    </span>
+  );
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function ChatPage({ panelMode = "full", auth, sessionId, onSessionEnded, onTicketCreated }) {

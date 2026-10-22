@@ -537,6 +537,116 @@ a {
   color: #52647a;
   background: #f8fbfd;
   font-size: 13px;
+  cursor: pointer;
+}
+
+.attachment-picker > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.attachment-drop span {
+  display: grid;
+  gap: 3px;
+}
+
+.attachment-drop strong {
+  color: #173750;
+}
+
+.attachment-drop small {
+  color: #64758a;
+  font-size: 11px;
+}
+
+.attachment-drop:hover,
+.attachment-picker > input:focus + .attachment-drop {
+  border-color: #007892;
+  background: #f0f9fb;
+}
+
+.selected-attachments {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.selected-attachments li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #dbe5ee;
+  border-radius: 6px;
+  color: #244057;
+  background: #fff;
+  font-size: 12px;
+}
+
+.selected-attachments li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-attachments li small {
+  margin-left: 8px;
+  color: #718196;
+}
+
+.selected-attachments button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  color: #a51d2d;
+  background: #fff1f2;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.attachment-links {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.attachment-links button {
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  overflow: hidden;
+  color: #006b84;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.attachment-links button:hover {
+  text-decoration: underline;
+}
+
+.attachment-links svg {
+  width: 13px;
+  height: 13px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.attachment-empty {
+  color: #718196;
 }
 
 .form-actions,
@@ -867,7 +977,7 @@ select:disabled {
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: 82px minmax(140px, 1fr) 110px 108px 90px 118px 96px;
+  grid-template-columns: 82px minmax(140px, 1fr) 110px 108px 90px 118px 96px minmax(140px, .8fr);
   gap: 10px;
   align-items: center;
   padding: 12px 14px;
@@ -2319,8 +2429,8 @@ select:disabled {
 
 .ticket-admin-table .admin-data-head,
 .ticket-admin-table .admin-data-row {
-  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(130px, .8fr) 120px repeat(3, minmax(150px, .9fr)) minmax(150px, .8fr);
-  min-width: 1390px;
+  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(130px, .8fr) 120px repeat(3, minmax(150px, .9fr)) minmax(170px, 1fr) minmax(150px, .8fr);
+  min-width: 1560px;
 }
 
 .technician-admin-table .admin-data-head,

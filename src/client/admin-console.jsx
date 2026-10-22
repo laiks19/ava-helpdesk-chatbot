@@ -273,7 +273,7 @@ export function AdminConsole({ api, auth }) {
         {notice ? <p className="notice compact">{notice}</p> : null}
         {tab === "MIS Dashboard" ? <AdminDashboard dashboard={dashboard} /> : null}
         <div hidden={tab !== "Helpdesk Manager"}><HelpdeskManager api={api} token={token} tickets={dashboard.tickets || []} /></div>
-        {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} /> : null}
+        {tab === "Tickets" ? <TicketAdmin tickets={dashboard.tickets} technicians={technicians} busy={busy} editor={ticketEditor} setEditor={setTicketEditor} onSave={saveTicket} onDelete={deleteTicket} api={api} token={token} /> : null}
         {tab === "Technician KPI" ? <TechnicianKpi dashboard={kpiDashboard} filters={kpiFilters} setFilters={setKpiFilters} settings={kpiSettingsEditor} setSettings={setKpiSettingsEditor} busy={busy} onApply={applyKpiFilters} onClear={clearKpiFilters} onSaveSettings={saveKpiSettings} /> : null}
         {tab === "Users" ? <UserAdmin users={users} busy={busy} editor={userEditor} setEditor={setUserEditor} onSave={saveUser} onAction={userAction} /> : null}
         {tab === "Technicians" ? <TechnicianAdmin technicians={technicians} busy={busy} editor={technicianEditor} setEditor={setTechnicianEditor} onSave={saveTechnician} onDelete={deleteTechnician} onAvailability={toggleTechnicianAvailability} /> : null}
@@ -549,13 +549,13 @@ function KpiMeter({ value = 0, available = true }) {
   );
 }
 
-function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, onDelete }) {
+function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, onDelete, api, token }) {
   return (
     <section className="admin-section">
       <div className="admin-section-title"><div><h2>Tickets</h2><p>Add, edit, assign, close, or delete support records.</p></div><button className="primary-button" type="button" onClick={() => setEditor({ ...emptyTicket })}>Add ticket</button></div>
       {editor ? <TicketEditor value={editor} setValue={setEditor} technicians={technicians} busy={busy} onSave={onSave} onCancel={() => setEditor(null)} /> : null}
       <div className="admin-data-table ticket-admin-table">
-        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Opened Date</span><span>Assigned Date</span><span>Closed Date</span><span>Actions</span></div>
+        <div className="admin-data-head"><span>Ticket</span><span>Requester</span><span>Technician</span><span>Status</span><span>Opened Date</span><span>Assigned Date</span><span>Closed Date</span><span>Attachments</span><span>Actions</span></div>
         {tickets.map((ticket) => (
           <div className="admin-data-row" key={ticket.id}>
             <span><strong>{ticket.id}</strong><small>{ticket.subject}</small></span>
@@ -565,6 +565,7 @@ function TicketAdmin({ tickets, technicians, busy, editor, setEditor, onSave, on
             <span>{formatMalaysiaDateTime(ticket.createdAt)}</span>
             <span>{formatMalaysiaDateTime(ticket.assignedAt, "Not assigned")}</span>
             <span>{formatMalaysiaDateTime(ticket.closedAt, "Not closed")}</span>
+            <span className="attachment-links">{ticket.attachments?.length ? ticket.attachments.map((attachment) => <button type="button" key={attachment.id} title={`Download ${attachment.originalName}`} onClick={async () => { const result = await api.attachmentDownload(token, attachment.id); window.location.assign(result.url); }}>{attachment.originalName}</button>) : "None"}</span>
             <span className="row-actions"><button type="button" onClick={() => setEditor({ ...ticket })}>Edit</button><button className="danger-link" type="button" onClick={() => onDelete(ticket)}>Delete</button></span>
           </div>
         ))}

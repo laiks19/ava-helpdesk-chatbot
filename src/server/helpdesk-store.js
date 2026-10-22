@@ -136,6 +136,38 @@ function createLocalHelpdeskStore(localPaths) {
     return tickets[index];
   }
 
+  async function addTicketAttachments(id, attachments) {
+    const index = tickets.findIndex((ticket) => ticket.id === id || ticket.recordId === id);
+    if (index < 0) throw storeError("Ticket not found.", 404);
+    tickets[index].attachments = attachments;
+    await persistTickets();
+    return attachments;
+  }
+
+  async function getTicketAttachment(id) {
+    for (const ticket of tickets) {
+      const attachment = (ticket.attachments || []).find((item) => item.id === id);
+      if (attachment) return { attachment, ticket };
+    }
+    throw storeError("Attachment not found.", 404);
+  }
+
+  async function rollbackTicketCreation(id) {
+    const index = tickets.findIndex((ticket) => ticket.id === id || ticket.recordId === id);
+    if (index < 0) return;
+    tickets.splice(index, 1);
+    await persistTickets();
+  }
+
+  async function unreferencedAttachmentPaths(storagePaths = []) {
+    const referenced = new Set(tickets.flatMap((ticket) => (ticket.attachments || []).map((attachment) => attachment.storagePath)));
+    return storagePaths.filter((storagePath) => !referenced.has(storagePath));
+  }
+
+  async function listAttachmentStoragePaths() {
+    return [...new Set(tickets.flatMap((ticket) => (ticket.attachments || []).map((attachment) => attachment.storagePath)))];
+  }
+
   async function listUsers() {
     return users.toSorted((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
   }
@@ -274,6 +306,11 @@ function createLocalHelpdeskStore(localPaths) {
     createTicket,
     updateTicket,
     deleteTicket,
+    addTicketAttachments,
+    getTicketAttachment,
+    rollbackTicketCreation,
+    unreferencedAttachmentPaths,
+    listAttachmentStoragePaths,
     listUsers,
     createUser,
     updateUser,
@@ -307,7 +344,7 @@ function createSupabaseHelpdeskStore(supabase) {
   }
 
   async function listTickets({ includeDeleted = false } = {}) {
-    let query = supabase.from("tickets").select("*, technicians(name)").order("created_at", { ascending: false });
+    let query = supabase.from("tickets").select("*, technicians(name), ticket_attachments(id, original_name, storage_path, content_type, size_bytes, created_at)").order("created_at", { ascending: false });
     if (!includeDeleted) query = query.is("deleted_at", null);
     const { data, error } = await query;
     if (error) throw error;
@@ -367,6 +404,59 @@ function createSupabaseHelpdeskStore(supabase) {
     if (error) throw error;
     await addActivity(data, actorUserId, "deleted", {});
     return normalizeTicketRow(data);
+  }
+
+  async function addTicketAttachments(id, attachments, uploadedBy = "") {
+    const current = await findTicket(id);
+    const rows = attachments.map((attachment) => ({
+      id: attachment.id,
+      ticket_id: current.id,
+      original_name: attachment.originalName,
+      storage_path: attachment.storagePath,
+      content_type: attachment.contentType,
+      size_bytes: attachment.sizeBytes,
+      uploaded_by: uploadedBy || null,
+      created_at: attachment.createdAt
+    }));
+    const { data, error } = await supabase.from("ticket_attachments").insert(rows).select();
+    if (error) throw error;
+    return (data || []).map(normalizeAttachmentRow);
+  }
+
+  async function getTicketAttachment(id) {
+    const { data, error } = await supabase
+      .from("ticket_attachments")
+      .select("*, tickets(requester_user_id, deleted_at)")
+      .eq("id", id)
+      .single();
+    if (error || !data) throw storeError("Attachment not found.", 404);
+    return {
+      attachment: normalizeAttachmentRow(data),
+      ticket: {
+        requesterUserId: data.tickets?.requester_user_id || "",
+        deletedAt: data.tickets?.deleted_at || ""
+      }
+    };
+  }
+
+  async function rollbackTicketCreation(id) {
+    const current = await findTicket(id);
+    const { error } = await supabase.from("tickets").delete().eq("id", current.id);
+    if (error) throw error;
+  }
+
+  async function unreferencedAttachmentPaths(storagePaths = []) {
+    if (!storagePaths.length) return [];
+    const { data, error } = await supabase.from("ticket_attachments").select("storage_path").in("storage_path", storagePaths);
+    if (error) throw error;
+    const referenced = new Set((data || []).map((row) => row.storage_path));
+    return storagePaths.filter((storagePath) => !referenced.has(storagePath));
+  }
+
+  async function listAttachmentStoragePaths() {
+    const { data, error } = await supabase.from("ticket_attachments").select("storage_path");
+    if (error) throw error;
+    return (data || []).map((row) => row.storage_path);
   }
 
   async function listUsers() {
@@ -530,7 +620,7 @@ function createSupabaseHelpdeskStore(supabase) {
 
   async function findTicket(id) {
     const number = ticketSequence(id);
-    let query = supabase.from("tickets").select("*, technicians(name)");
+    let query = supabase.from("tickets").select("*, technicians(name), ticket_attachments(id, original_name, storage_path, content_type, size_bytes, created_at)");
     query = number ? query.eq("ticket_number", number) : query.eq("id", id);
     const { data, error } = await query.single();
     if (error || !data) throw storeError("Ticket not found.", 404);
@@ -554,6 +644,11 @@ function createSupabaseHelpdeskStore(supabase) {
     createTicket,
     updateTicket,
     deleteTicket,
+    addTicketAttachments,
+    getTicketAttachment,
+    rollbackTicketCreation,
+    unreferencedAttachmentPaths,
+    listAttachmentStoragePaths,
     listUsers,
     createUser,
     updateUser,
@@ -595,7 +690,19 @@ function normalizeTicketRow(row) {
     updatedAt: row.updated_at,
     closedAt: row.closed_at || "",
     deletedAt: row.deleted_at || "",
-    deletedBy: row.deleted_by || ""
+    deletedBy: row.deleted_by || "",
+    attachments: (row.ticket_attachments || []).map(normalizeAttachmentRow)
+  };
+}
+
+function normalizeAttachmentRow(row) {
+  return {
+    id: row.id,
+    originalName: row.original_name,
+    storagePath: row.storage_path,
+    contentType: row.content_type,
+    sizeBytes: Number(row.size_bytes) || 0,
+    createdAt: row.created_at
   };
 }
 
